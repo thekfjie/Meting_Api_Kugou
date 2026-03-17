@@ -15,6 +15,7 @@ const app = new Hono()
   .use(errors)
 
 app.get(`${config.http.prefix}/api`, apiService)
+app.get(`${config.http.prefix}/music`, apiService)
 app.get(`${config.http.prefix}/demo`, demoService)
 
 serve({

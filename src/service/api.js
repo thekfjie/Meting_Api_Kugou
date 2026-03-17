@@ -22,14 +22,12 @@ const METING_METHODS = {
 }
 
 export default async (c) => {
-  // 1. 初始化参数
   const query = c.req.query()
   const server = query.server || 'netease'
   const type = query.type || 'search'
   const id = query.id || 'hello'
   const token = query.token || query.auth || 'token'
 
-  // 2. 校验参数
   if (!['netease', 'tencent', 'kugou', 'baidu', 'kuwo'].includes(server)) {
     throw new HTTPException(400, { message: 'server 参数不合法' })
   }
@@ -37,24 +35,23 @@ export default async (c) => {
     throw new HTTPException(400, { message: 'type 参数不合法' })
   }
 
-  // 3. 鉴权
   if (['lrc', 'url', 'pic'].includes(type)) {
     if (auth(server, type, id) !== token) {
       throw new HTTPException(401, { message: '鉴权失败,非法调用' })
     }
   }
 
-  // 4. 调用 API
-  const cacheKey = `${server}/${type}/${id}`
+  const referrer = c.req.header('referer')
+  const allowCookie = isAllowedHost(referrer)
+
+  const cacheKey = `${server}/${type}/${id}/${allowCookie ? 'cookie' : 'anon'}`
   let data = cache.get(cacheKey)
   if (data === undefined) {
     c.header('x-cache', 'miss')
     const meting = new Meting(server)
     meting.format(true)
 
-    // 检查 referrer 并配置 cookie
-    const referrer = c.req.header('referer')
-    if (isAllowedHost(referrer)) {
+    if (allowCookie) {
       const cookie = await readCookieFile(server)
       if (cookie) {
         meting.cookie(cookie)
@@ -68,6 +65,7 @@ export default async (c) => {
     } catch (error) {
       throw new HTTPException(500, { message: '上游 API 调用失败' })
     }
+
     try {
       data = JSON.parse(response)
     } catch (error) {
@@ -78,14 +76,11 @@ export default async (c) => {
     })
   }
 
-  // 5. 组装结果
   if (type === 'url') {
     let url = data.url
-    // 空结果返回 404
     if (!url) {
       return c.body(null, 404)
     }
-    // 链接转换
     if (server === 'netease') {
       url = url
         .replace('://m7c.', '://m7.')
@@ -111,7 +106,6 @@ export default async (c) => {
 
   if (type === 'pic') {
     const url = data.url
-    // 空结果返回 404
     if (!url) {
       return c.body(null, 404)
     }
@@ -122,13 +116,40 @@ export default async (c) => {
     return c.text(lyricFormat(data.lyric, data.tlyric || ''))
   }
 
-  return c.json(data.map(x => {
+  const debug = ['1', 'true', 'yes', 'on'].includes(String(process.env.METING_DEBUG || '').toLowerCase())
+  if (debug && server === 'kugou') {
+    console.log('================ 酷狗原始返回数据 ================')
+    console.log(JSON.stringify(data, null, 2))
+    console.log('================================================')
+  }
+
+  // 🛡️ 智能兼容防弹装甲 🛡️
+  const safeData = Array.isArray(data) ? data : (data.error ? [] : [data])
+  return c.json(safeData.map(x => {
+    // 兼容标准格式(name)与酷狗原始格式(songName)
+    const title = x.name || x.songName || '未知歌曲'
+
+    // 兼容歌手格式
+    let author = '未知歌手'
+    if (Array.isArray(x.artist)) {
+      author = x.artist.join(' / ')
+    } else if (Array.isArray(x.authors)) {
+      author = x.authors.map(a => a.author_name).join(' / ') // 提取酷狗的歌手名
+    } else if (typeof x.singerName === 'string') {
+      author = x.singerName
+    }
+
+    // 兼容 ID 格式：标准用 url_id，酷狗原始用 hash
+    const urlId = x.url_id || x.hash || id
+    const picId = x.pic_id || x.album_audio_id || x.albumid || x.hash || id
+    const lrcId = x.lyric_id || x.hash || id
+
     return {
-      title: x.name,
-      author: x.artist.join(' / '),
-      url: `${config.meting.url}/api?server=${server}&type=url&id=${x.url_id}&auth=${auth(server, 'url', x.url_id)}`,
-      pic: `${config.meting.url}/api?server=${server}&type=pic&id=${x.pic_id}&auth=${auth(server, 'pic', x.pic_id)}`,
-      lrc: `${config.meting.url}/api?server=${server}&type=lrc&id=${x.lyric_id}&auth=${auth(server, 'lrc', x.lyric_id)}`
+      title,
+      author,
+      url: `${config.meting.url}/music?server=${server}&type=url&id=${urlId}&auth=${auth(server, 'url', urlId)}`,
+      pic: `${config.meting.url}/music?server=${server}&type=pic&id=${picId}&auth=${auth(server, 'pic', picId)}`,
+      lrc: `${config.meting.url}/music?server=${server}&type=lrc&id=${lrcId}&auth=${auth(server, 'lrc', lrcId)}`
     }
   }))
 }
