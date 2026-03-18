@@ -26,6 +26,19 @@ export default {
   meting: {
     url: process.env.METING_URL || '',
     token: process.env.METING_TOKEN || 'token',
+    kugou: {
+      premiumKey: process.env.METING_KUGOU_PREMIUM_KEY || '',
+      status: {
+        freeHash: process.env.METING_KUGOU_STATUS_FREE_HASH || '83995C1F356E6FC35A14D27940882F88',
+        vipHash: process.env.METING_KUGOU_STATUS_VIP_HASH || '',
+        vipDurationMs: toNumber(process.env.METING_KUGOU_STATUS_VIP_DURATION_MS, 0),
+        ttlMs: toNumber(process.env.METING_KUGOU_STATUS_TTL_MS, 5 * 60 * 1000),
+        maxRpm: {
+          premium: toNumber(process.env.METING_KUGOU_PREMIUM_MAX_RPM, 60),
+          general: toNumber(process.env.METING_KUGOU_GENERAL_MAX_RPM, 180)
+        }
+      }
+    },
     cookie: {
       allowHosts: process.env.METING_COOKIE_ALLOW_HOSTS
         ? (process.env.METING_COOKIE_ALLOW_HOSTS).split(',').map(h => h.trim().toLowerCase())

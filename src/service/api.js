@@ -1,10 +1,12 @@
 import Meting from '@meting/core'
+import { timingSafeEqual } from 'node:crypto'
 import hashjs from 'hash.js'
 import { HTTPException } from 'hono/http-exception'
 import config from '../config.js'
 import { format as lyricFormat } from '../utils/lyric.js'
 import { readCookieFile, isAllowedHost } from '../utils/cookie.js'
 import { getKugouCoverFromSonginfo } from '../utils/kugou-songinfo.js'
+import { recordKugouRequest } from '../utils/kugou-runtime.js'
 import { LRUCache } from 'lru-cache'
 
 const cache = new LRUCache({
@@ -28,7 +30,7 @@ export default async (c) => {
   const type = query.type || 'search'
   const id = query.id || 'hello'
   const token = query.token || query.auth || 'token'
-  const kugouPoolHint = query.kg_pool || ''
+  const requestKey = query.key || ''
 
   if (!['netease', 'tencent', 'kugou', 'baidu', 'kuwo'].includes(server)) {
     throw new HTTPException(400, { message: 'server 参数不合法' })
@@ -45,23 +47,34 @@ export default async (c) => {
 
   const referrer = c.req.header('referer')
   const allowCookie = isAllowedHost(referrer)
-  const kugouPremium = shouldUseKugouPremium({
+  const kugouRoute = resolveKugouPool({
     server,
     referrer,
     allowCookie,
-    kugouPoolHint
+    requestKey
   })
-  const cacheMode = getCacheMode({ server, allowCookie, kugouPremium })
+  const kugouPool = kugouRoute.pool
+  const cacheMode = getCacheMode({ server, allowCookie, kugouPool })
 
   const cacheKey = `${server}/${type}/${id}/${cacheMode}`
   let data = cache.get(cacheKey)
+  const cacheHit = data !== undefined
+  if (server === 'kugou') {
+    recordKugouRequest({
+      pool: kugouPool,
+      reason: kugouRoute.reason,
+      cacheHit
+    })
+  }
+
   if (data === undefined) {
     c.header('x-cache', 'miss')
     const meting = new Meting(server)
     meting.format(true)
 
-    const cookie = getRequestCookie({ server, allowCookie, kugouPremium })
-      ? await readCookieFile(server)
+    const cookiePool = getCookiePool({ server, allowCookie, kugouPool })
+    const cookie = cookiePool
+      ? await readCookieFile(server, cookiePool)
       : ''
     if (cookie) meting.cookie(cookie)
 
@@ -169,52 +182,67 @@ export default async (c) => {
         server,
         type: 'url',
         id: urlId,
-        premium: kugouPremium
+        requestKey,
+        kugouPool
       }),
       pic: buildResourceUrl({
         server,
         type: 'pic',
         id: picId,
-        premium: kugouPremium
+        requestKey,
+        kugouPool
       }),
       lrc: buildResourceUrl({
         server,
         type: 'lrc',
         id: lrcId,
-        premium: kugouPremium
+        requestKey,
+        kugouPool
       })
     }
   }))
 }
 
-const shouldUseKugouPremium = ({ server, referrer, allowCookie, kugouPoolHint }) => {
-  if (server !== 'kugou') return false
-  if (kugouPoolHint !== 'premium') return false
-  if (!referrer) return false
-  if (config.meting.cookie.allowHosts.length === 0) return false
-  return allowCookie
+const hasValidKugouPremiumKey = (requestKey) => {
+  const expectedKey = config.meting.kugou.premiumKey
+  if (!expectedKey || !requestKey) return false
+
+  const left = Buffer.from(requestKey)
+  const right = Buffer.from(expectedKey)
+  if (left.length !== right.length) return false
+
+  return timingSafeEqual(left, right)
 }
 
-const getCacheMode = ({ server, allowCookie, kugouPremium }) => {
+const resolveKugouPool = ({ server, referrer, allowCookie, requestKey }) => {
+  if (server !== 'kugou') return { pool: 'default', reason: 'default' }
+  if (hasValidKugouPremiumKey(requestKey)) return { pool: 'premium', reason: 'key' }
+  if (referrer && config.meting.cookie.allowHosts.length > 0 && allowCookie) {
+    return { pool: 'premium', reason: 'referrer' }
+  }
+  return { pool: 'general', reason: 'fallback' }
+}
+
+const getCacheMode = ({ server, allowCookie, kugouPool }) => {
   if (server === 'kugou') {
-    return kugouPremium ? 'premium' : 'general'
+    return kugouPool
   }
   return allowCookie ? 'cookie' : 'anon'
 }
 
-const getRequestCookie = ({ server, allowCookie, kugouPremium }) => {
-  if (server === 'kugou') return kugouPremium
-  return allowCookie
+const getCookiePool = ({ server, allowCookie, kugouPool }) => {
+  if (server === 'kugou') return kugouPool
+  return allowCookie ? 'default' : ''
 }
 
-const buildResourceUrl = ({ server, type, id, premium }) => {
+const buildResourceUrl = ({ server, type, id, requestKey, kugouPool }) => {
   const url = new URL(`${config.meting.url}/music`)
   url.searchParams.set('server', server)
   url.searchParams.set('type', type)
   url.searchParams.set('id', id)
   url.searchParams.set('auth', auth(server, type, id))
-  if (server === 'kugou' && premium) {
-    url.searchParams.set('kg_pool', 'premium')
+  if (server === 'kugou' && kugouPool === 'premium' && hasValidKugouPremiumKey(requestKey)) {
+    url.searchParams.set('key', requestKey)
   }
   return url.toString()
 }

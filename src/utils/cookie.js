@@ -11,13 +11,43 @@ const COOKIE_TTL = 1000 * 60 * 5 // 5分钟缓存过期
 const cookieDir = resolve(process.cwd(), 'cookie')
 let watcher = null
 
+const normalizePool = (server, pool = 'default') => {
+  if (server !== 'kugou') return 'default'
+  if (pool === 'premium' || pool === 'general') return pool
+  return 'default'
+}
+
+const getCacheKey = (server, pool = 'default') => `${server}:${normalizePool(server, pool)}`
+
+const getCookieSources = (server, pool = 'default') => {
+  const normalizedPool = normalizePool(server, pool)
+
+  if (server === 'kugou' && normalizedPool === 'premium') {
+    return {
+      envKeys: ['METING_COOKIE_KUGOU_PREMIUM', 'METING_COOKIE_KUGOU'],
+      fileNames: ['kugou-premium', 'kugou']
+    }
+  }
+
+  if (server === 'kugou' && normalizedPool === 'general') {
+    return {
+      envKeys: ['METING_COOKIE_KUGOU_GENERAL'],
+      fileNames: ['kugou-general']
+    }
+  }
+
+  return {
+    envKeys: [`METING_COOKIE_${server.toUpperCase()}`],
+    fileNames: [server]
+  }
+}
+
 async function startWatcher () {
   try {
     watcher = watch(cookieDir)
     for await (const event of watcher) {
       if (event.filename) {
-        // 文件变化时清除对应缓存
-        cookieCache.delete(event.filename)
+        cookieCache.clear()
       }
     }
   } catch (error) {
@@ -30,54 +60,53 @@ if (!watcher) {
   startWatcher().catch(() => {})
 }
 
-/**
- * 读取指定平台的 cookie 文件
- * @param {string} server - 平台名称 (netease, tencent 等)
- * @returns {Promise<string>} cookie 字符串，失败时返回空字符串
- */
-export async function readCookieFile (server) {
+export async function readCookieFile (server, pool = 'default') {
   const now = Date.now()
-  const cached = cookieCache.get(server)
+  const cacheKey = getCacheKey(server, pool)
+  const cached = cookieCache.get(cacheKey)
 
   // 检查缓存是否有效
   if (cached && now - cached.timestamp < COOKIE_TTL) {
     return cached.value
   }
 
+  const { envKeys, fileNames } = getCookieSources(server, pool)
+
   // 优先从环境变量读取
-  const envKey = `METING_COOKIE_${server.toUpperCase()}`
-  const envCookie = process.env[envKey]
-  if (envCookie) {
-    const value = envCookie.trim()
-    // 更新缓存
-    cookieCache.set(server, {
-      value,
-      timestamp: now
-    })
-    return value
+  for (const envKey of envKeys) {
+    const envCookie = process.env[envKey]
+    if (envCookie) {
+      const value = envCookie.trim()
+      cookieCache.set(cacheKey, {
+        value,
+        timestamp: now
+      })
+      return value
+    }
   }
 
   // 从文件读取
-  try {
-    const cookiePath = resolve(process.cwd(), 'cookie', server)
-    const cookie = await readFile(cookiePath, 'utf-8')
-    const value = cookie.trim()
+  for (const fileName of fileNames) {
+    try {
+      const cookiePath = resolve(process.cwd(), 'cookie', fileName)
+      const cookie = await readFile(cookiePath, 'utf-8')
+      const value = cookie.trim()
 
-    // 更新缓存
-    cookieCache.set(server, {
-      value,
-      timestamp: now
-    })
+      cookieCache.set(cacheKey, {
+        value,
+        timestamp: now
+      })
 
-    return value
-  } catch (error) {
-    // 读取失败时也缓存空字符串，避免频繁读取不存在的文件
-    cookieCache.set(server, {
-      value: '',
-      timestamp: now
-    })
-    return ''
+      return value
+    } catch (error) {}
   }
+
+  // 读取失败时也缓存空字符串，避免频繁读取不存在的文件
+  cookieCache.set(cacheKey, {
+    value: '',
+    timestamp: now
+  })
+  return ''
 }
 
 /**

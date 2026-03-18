@@ -1,5 +1,14 @@
 import { logger as baseLogger } from './logger.js'
 
+const sanitizeQuery = (query) => {
+  if (!query || typeof query !== 'object') return query
+  const next = { ...query }
+  if (typeof next.key === 'string' && next.key) {
+    next.key = '[redacted]'
+  }
+  return next
+}
+
 export default async (c, next) => {
   try {
     await next()
@@ -24,7 +33,7 @@ export default async (c, next) => {
       request: {
         method: c.req.method,
         path: c.req.path,
-        query: c.req.query(),
+        query: sanitizeQuery(c.req.query()),
         userAgent: c.req.header('user-agent'),
         ip: c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
       }
