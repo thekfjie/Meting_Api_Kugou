@@ -28,6 +28,7 @@ export default async (c) => {
   const type = query.type || 'search'
   const id = query.id || 'hello'
   const token = query.token || query.auth || 'token'
+  const kugouPoolHint = query.kg_pool || ''
 
   if (!['netease', 'tencent', 'kugou', 'baidu', 'kuwo'].includes(server)) {
     throw new HTTPException(400, { message: 'server 参数不合法' })
@@ -44,15 +45,24 @@ export default async (c) => {
 
   const referrer = c.req.header('referer')
   const allowCookie = isAllowedHost(referrer)
+  const kugouPremium = shouldUseKugouPremium({
+    server,
+    referrer,
+    allowCookie,
+    kugouPoolHint
+  })
+  const cacheMode = getCacheMode({ server, allowCookie, kugouPremium })
 
-  const cacheKey = `${server}/${type}/${id}/${allowCookie ? 'cookie' : 'anon'}`
+  const cacheKey = `${server}/${type}/${id}/${cacheMode}`
   let data = cache.get(cacheKey)
   if (data === undefined) {
     c.header('x-cache', 'miss')
     const meting = new Meting(server)
     meting.format(true)
 
-    const cookie = allowCookie ? await readCookieFile(server) : ''
+    const cookie = getRequestCookie({ server, allowCookie, kugouPremium })
+      ? await readCookieFile(server)
+      : ''
     if (cookie) meting.cookie(cookie)
 
     if (server === 'kugou' && type === 'pic' && cookie) {
@@ -155,11 +165,58 @@ export default async (c) => {
     return {
       title,
       author,
-      url: `${config.meting.url}/music?server=${server}&type=url&id=${urlId}&auth=${auth(server, 'url', urlId)}`,
-      pic: `${config.meting.url}/music?server=${server}&type=pic&id=${picId}&auth=${auth(server, 'pic', picId)}`,
-      lrc: `${config.meting.url}/music?server=${server}&type=lrc&id=${lrcId}&auth=${auth(server, 'lrc', lrcId)}`
+      url: buildResourceUrl({
+        server,
+        type: 'url',
+        id: urlId,
+        premium: kugouPremium
+      }),
+      pic: buildResourceUrl({
+        server,
+        type: 'pic',
+        id: picId,
+        premium: kugouPremium
+      }),
+      lrc: buildResourceUrl({
+        server,
+        type: 'lrc',
+        id: lrcId,
+        premium: kugouPremium
+      })
     }
   }))
+}
+
+const shouldUseKugouPremium = ({ server, referrer, allowCookie, kugouPoolHint }) => {
+  if (server !== 'kugou') return false
+  if (kugouPoolHint !== 'premium') return false
+  if (!referrer) return false
+  if (config.meting.cookie.allowHosts.length === 0) return false
+  return allowCookie
+}
+
+const getCacheMode = ({ server, allowCookie, kugouPremium }) => {
+  if (server === 'kugou') {
+    return kugouPremium ? 'premium' : 'general'
+  }
+  return allowCookie ? 'cookie' : 'anon'
+}
+
+const getRequestCookie = ({ server, allowCookie, kugouPremium }) => {
+  if (server === 'kugou') return kugouPremium
+  return allowCookie
+}
+
+const buildResourceUrl = ({ server, type, id, premium }) => {
+  const url = new URL(`${config.meting.url}/music`)
+  url.searchParams.set('server', server)
+  url.searchParams.set('type', type)
+  url.searchParams.set('id', id)
+  url.searchParams.set('auth', auth(server, type, id))
+  if (server === 'kugou' && premium) {
+    url.searchParams.set('kg_pool', 'premium')
+  }
+  return url.toString()
 }
 
 const auth = (server, type, id) => {
