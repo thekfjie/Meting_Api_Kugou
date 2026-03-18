@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import config from '../config.js'
 import { format as lyricFormat } from '../utils/lyric.js'
 import { readCookieFile, isAllowedHost } from '../utils/cookie.js'
+import { getKugouCoverFromSonginfo } from '../utils/kugou-songinfo.js'
 import { LRUCache } from 'lru-cache'
 
 const cache = new LRUCache({
@@ -51,25 +52,30 @@ export default async (c) => {
     const meting = new Meting(server)
     meting.format(true)
 
-    if (allowCookie) {
-      const cookie = await readCookieFile(server)
-      if (cookie) {
-        meting.cookie(cookie)
+    const cookie = allowCookie ? await readCookieFile(server) : ''
+    if (cookie) meting.cookie(cookie)
+
+    if (server === 'kugou' && type === 'pic' && cookie) {
+      const cover = await getKugouCoverFromSonginfo({ hash: id, cookie, size: 400 })
+      if (cover) {
+        data = cover
       }
     }
 
-    const method = METING_METHODS[type]
-    let response
-    try {
-      response = await meting[method](id)
-    } catch (error) {
-      throw new HTTPException(500, { message: '上游 API 调用失败' })
-    }
+    if (data === undefined) {
+      const method = METING_METHODS[type]
+      let response
+      try {
+        response = await meting[method](id)
+      } catch (error) {
+        throw new HTTPException(500, { message: '上游 API 调用失败' })
+      }
 
-    try {
-      data = JSON.parse(response)
-    } catch (error) {
-      throw new HTTPException(500, { message: '上游 API 返回格式异常' })
+      try {
+        data = JSON.parse(response)
+      } catch (error) {
+        throw new HTTPException(500, { message: '上游 API 返回格式异常' })
+      }
     }
     cache.set(cacheKey, data, {
       ttl: type === 'url' ? 1000 * 60 * 10 : 1000 * 60 * 60
@@ -141,7 +147,9 @@ export default async (c) => {
 
     // 兼容 ID 格式：标准用 url_id，酷狗原始用 hash
     const urlId = x.url_id || x.hash || id
-    const picId = x.pic_id || x.album_audio_id || x.albumid || x.hash || id
+    const picId = server === 'kugou'
+      ? (x.hash || x.pic_id || x.url_id || id)
+      : (x.pic_id || x.album_audio_id || x.albumid || x.hash || id)
     const lrcId = x.lyric_id || x.hash || id
 
     return {
