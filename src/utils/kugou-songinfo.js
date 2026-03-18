@@ -17,6 +17,8 @@ function parseCookie (cookie = '') {
   return out
 }
 
+export const parseKugouCookie = parseCookie
+
 function signature (params) {
   const sorted = Object.entries(params)
     .map(([k, v]) => `${k}=${v}`)
@@ -53,10 +55,9 @@ function normalizeCoverUrl (url, size = 400) {
   return out
 }
 
-export async function getKugouCoverFromSonginfo ({
+export async function getKugouSonginfo ({
   hash,
-  cookie,
-  size = 400
+  cookie
 }) {
   if (!hash || !cookie) return null
 
@@ -100,10 +101,21 @@ export async function getKugouCoverFromSonginfo ({
     const data = json && typeof json === 'object' ? json.data : null
     if (!data || typeof data !== 'object') return null
 
-    const cover = data.trans_param?.union_cover || data.sizable_cover || data.img || ''
-    const url = normalizeCoverUrl(cover, size)
-    return url ? { url } : null
+    return data
   } catch (error) {
     return null
   }
+}
+
+export async function getKugouCoverFromSonginfo ({
+  hash,
+  cookie,
+  size = 400
+}) {
+  const data = await getKugouSonginfo({ hash, cookie })
+  if (!data) return null
+
+  const cover = data.trans_param?.union_cover || data.sizable_cover || data.img || ''
+  const url = normalizeCoverUrl(cover, size)
+  return url ? { url } : null
 }

@@ -1,0 +1,240 @@
+import config from '../config.js'
+import { readCookieFile } from './cookie.js'
+import { getKugouRuntimeSnapshot } from './kugou-runtime.js'
+import { getKugouSonginfo, parseKugouCookie } from './kugou-songinfo.js'
+
+let cachedStatus = null
+let cachedAt = 0
+
+const nowIso = () => new Date().toISOString()
+
+const getPlayableUrl = (data) => data?.play_url || data?.play_backup_url || ''
+
+const classifyVipCapability = (data) => {
+  if (!data) {
+    return {
+      vip: false,
+      vipState: 'unreachable',
+      vipReason: 'vip-probe-no-data'
+    }
+  }
+
+  const playUrl = getPlayableUrl(data)
+  if (!playUrl) {
+    return {
+      vip: false,
+      vipState: 'blocked',
+      vipReason: 'vip-probe-no-url'
+    }
+  }
+
+  if (playUrl.includes('/yp/full/')) {
+    return {
+      vip: true,
+      vipState: 'full',
+      vipReason: 'ok'
+    }
+  }
+
+  if (playUrl.includes('/yp/p_')) {
+    return {
+      vip: false,
+      vipState: 'preview',
+      vipReason: 'preview-only'
+    }
+  }
+
+  const expectedDurationMs = config.meting.kugou.status.vipDurationMs
+  const actualDurationMs = Number(data.timelength || 0)
+
+  if (expectedDurationMs > 0 && actualDurationMs > 0) {
+    if (actualDurationMs >= expectedDurationMs * 0.9) {
+      return {
+        vip: true,
+        vipState: 'full',
+        vipReason: 'duration-match'
+      }
+    }
+
+    return {
+      vip: false,
+      vipState: 'preview',
+      vipReason: 'duration-preview'
+    }
+  }
+
+  return {
+    vip: false,
+    vipState: 'unknown',
+    vipReason: 'vip-probe-ambiguous'
+  }
+}
+
+const withLoad = (pool, account, runtime) => {
+  const currentPerMinute = runtime?.perMinute?.[pool] || 0
+  const maxPerMinute = config.meting.kugou.status.maxRpm[pool] || 0
+  const usagePercent = maxPerMinute > 0
+    ? Math.min(999, Math.round((currentPerMinute / maxPerMinute) * 100))
+    : null
+
+  return {
+    ...account,
+    load: {
+      currentPerMinute,
+      maxPerMinute,
+      usagePercent
+    }
+  }
+}
+
+const hasRequiredFields = (cookie) => {
+  return Boolean(cookie.t && cookie.KugooID && (cookie.mid || cookie.kg_mid) && (cookie.dfid || cookie.kg_dfid))
+}
+
+const buildGeneralAnonymousStatus = () => ({
+  mode: 'anonymous',
+  configured: false,
+  requiredFields: false,
+  valid: null,
+  vip: null,
+  vipState: 'anonymous',
+  routeEligible: true,
+  statusReason: 'anonymous-fallback',
+  vipReason: 'not-tested'
+})
+
+const probeCookiePool = async (pool) => {
+  const cookie = await readCookieFile('kugou', pool)
+
+  if (!cookie) {
+    return pool === 'general'
+      ? buildGeneralAnonymousStatus()
+      : {
+          mode: 'cookie',
+          configured: false,
+          requiredFields: false,
+          valid: false,
+          vip: null,
+          vipState: 'untested',
+          routeEligible: false,
+          statusReason: 'missing-cookie',
+          vipReason: 'not-tested'
+        }
+  }
+
+  const parsed = parseKugouCookie(cookie)
+  const requiredFields = hasRequiredFields(parsed)
+
+  if (!requiredFields) {
+    return {
+      mode: 'cookie',
+      configured: true,
+      requiredFields: false,
+      valid: false,
+      vip: null,
+      vipState: 'untested',
+      routeEligible: false,
+      statusReason: 'missing-required-fields',
+      vipReason: 'not-tested'
+    }
+  }
+
+  const basicData = await getKugouSonginfo({
+    hash: config.meting.kugou.status.freeHash,
+    cookie
+  })
+
+  const valid = Boolean(basicData?.hash || basicData?.audio_name || basicData?.song_name)
+
+  if (!valid) {
+    return {
+      mode: 'cookie',
+      configured: true,
+      requiredFields: true,
+      valid: false,
+      vip: null,
+      vipState: 'untested',
+      routeEligible: false,
+      statusReason: 'songinfo-probe-failed',
+      vipReason: 'not-tested'
+    }
+  }
+
+  if (!config.meting.kugou.status.vipHash) {
+    return {
+      mode: 'cookie',
+      configured: true,
+      requiredFields: true,
+      valid: true,
+      vip: null,
+      vipState: 'untested',
+      routeEligible: true,
+      statusReason: 'ok',
+      vipReason: 'vip-hash-unset'
+    }
+  }
+
+  const vipData = await getKugouSonginfo({
+    hash: config.meting.kugou.status.vipHash,
+    cookie
+  })
+
+  const vipResult = classifyVipCapability(vipData)
+
+  return {
+    mode: 'cookie',
+    configured: true,
+    requiredFields: true,
+    valid: true,
+    vip: vipResult.vip,
+    vipState: vipResult.vipState,
+    routeEligible: true,
+    statusReason: 'ok',
+    vipReason: vipResult.vipReason
+  }
+}
+
+export async function getKugouAccountStatus (force = false) {
+  const ttl = config.meting.kugou.status.ttlMs
+  const now = Date.now()
+
+  if (!force && cachedStatus && now - cachedAt < ttl) {
+    return cachedStatus
+  }
+
+  const [premium, general] = await Promise.all([
+    probeCookiePool('premium'),
+    probeCookiePool('general')
+  ])
+
+  const runtime = getKugouRuntimeSnapshot()
+  const premiumMaxPerMinute = config.meting.kugou.status.maxRpm.premium || 0
+  const generalMaxPerMinute = config.meting.kugou.status.maxRpm.general || 0
+  const premiumRemaining = Math.max(0, premiumMaxPerMinute - (runtime.perMinute?.premium || 0))
+  const generalRemaining = Math.max(0, generalMaxPerMinute - (runtime.perMinute?.general || 0))
+
+  cachedStatus = {
+    checkedAt: nowIso(),
+    ttlSeconds: Math.floor(ttl / 1000),
+    auth: {
+      premiumKeyConfigured: Boolean(config.meting.kugou.premiumKey),
+      premiumByReferrerAllowed: config.meting.cookie.allowHosts.length > 0,
+      allowHosts: config.meting.cookie.allowHosts
+    },
+    traffic: {
+      ...runtime,
+      remainingPerMinute: {
+        premium: premiumRemaining,
+        general: generalRemaining,
+        total: premiumRemaining + generalRemaining
+      }
+    },
+    accounts: {
+      premium: withLoad('premium', premium, runtime),
+      general: withLoad('general', general, runtime)
+    }
+  }
+  cachedAt = now
+
+  return cachedStatus
+}
