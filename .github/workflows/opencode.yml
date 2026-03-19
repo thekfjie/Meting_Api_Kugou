@@ -29,5 +29,6 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://ai.qaq.al/v1
         with:
           model: openai/gpt-5.4
