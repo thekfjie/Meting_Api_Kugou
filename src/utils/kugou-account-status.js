@@ -1,4 +1,5 @@
 import config from '../config.js'
+import Meting from '@meting/core'
 import { readCookieFile } from './cookie.js'
 import { getKugouRuntimeSnapshot } from './kugou-runtime.js'
 import { getKugouSonginfo, parseKugouCookie } from './kugou-songinfo.js'
@@ -10,8 +11,42 @@ const nowIso = () => new Date().toISOString()
 
 const getPlayableUrl = (data) => data?.play_url || data?.play_backup_url || ''
 
-const classifyVipCapability = (data) => {
-  if (!data) {
+const getKugouResolvedUrl = async ({ hash, cookie }) => {
+  if (!hash || !cookie) return ''
+
+  try {
+    const meting = new Meting('kugou')
+    meting.format(true)
+    meting.cookie(cookie)
+
+    const response = await meting.url(String(hash).toUpperCase())
+    const data = JSON.parse(response)
+    return typeof data?.url === 'string' ? data.url : ''
+  } catch (error) {
+    return ''
+  }
+}
+
+const classifyVipCapability = ({ songinfo, resolvedUrl }) => {
+  if (resolvedUrl) {
+    if (resolvedUrl.includes('/yp/full/')) {
+      return {
+        vip: true,
+        vipState: 'full',
+        vipReason: 'resolved-url-full'
+      }
+    }
+
+    if (resolvedUrl.includes('/yp/p_')) {
+      return {
+        vip: false,
+        vipState: 'preview',
+        vipReason: 'resolved-url-preview'
+      }
+    }
+  }
+
+  if (!songinfo) {
     return {
       vip: false,
       vipState: 'unreachable',
@@ -19,7 +54,7 @@ const classifyVipCapability = (data) => {
     }
   }
 
-  const playUrl = getPlayableUrl(data)
+  const playUrl = getPlayableUrl(songinfo)
   if (!playUrl) {
     return {
       vip: false,
@@ -45,7 +80,7 @@ const classifyVipCapability = (data) => {
   }
 
   const expectedDurationMs = config.meting.kugou.status.vipDurationMs
-  const actualDurationMs = Number(data.timelength || 0)
+  const actualDurationMs = Number(songinfo.timelength || 0)
 
   if (expectedDurationMs > 0 && actualDurationMs > 0) {
     if (actualDurationMs >= expectedDurationMs * 0.9) {
@@ -179,7 +214,15 @@ const probeCookiePool = async (pool) => {
     cookie
   })
 
-  const vipResult = classifyVipCapability(vipData)
+  const resolvedUrl = await getKugouResolvedUrl({
+    hash: config.meting.kugou.status.vipHash,
+    cookie
+  })
+
+  const vipResult = classifyVipCapability({
+    songinfo: vipData,
+    resolvedUrl
+  })
 
   return {
     mode: 'cookie',

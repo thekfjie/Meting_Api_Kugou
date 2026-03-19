@@ -4,39 +4,14 @@ const describePool = (pool, account, traffic) => {
   const currentMinute = traffic?.perMinute?.[pool] || 0
   const remainingMinute = traffic?.remainingPerMinute?.[pool] || 0
   const lastRequestAt = traffic?.lastRequestAt?.[pool] || null
+  const routeName = pool === 'premium' ? 'Pro' : 'Normal'
 
   if (pool === 'general') {
     if (account.mode === 'anonymous') {
       return {
-        label: '匿名可用',
+        label: 'Public access',
         tone: 'warn',
-        detail: '当前未配置普通池 Cookie，已回退到匿名通道',
-        currentMinute,
-        remainingMinute,
-        lastRequestAt
-      }
-    }
-
-    if (account.valid === false) {
-      return {
-        label: '普通池异常',
-        tone: 'bad',
-        detail: mapStatusReason(account.statusReason),
-        currentMinute,
-        remainingMinute,
-        lastRequestAt
-      }
-    }
-
-    if (account.valid === true) {
-      const vipHint = account.vipState && !['anonymous', 'untested'].includes(account.vipState)
-        ? `；VIP 探针结果：${mapVipState(account.vipState)}（仅作信息）`
-        : ''
-
-      return {
-        label: '普通池可用',
-        tone: 'good',
-        detail: `基础探活正常，可继续承担非会员请求${vipHint}`,
+        detail: '当前通过公开通道访问，VIP 歌曲通常只会返回试听片段。',
         currentMinute,
         remainingMinute,
         lastRequestAt
@@ -46,9 +21,9 @@ const describePool = (pool, account, traffic) => {
 
   if (account.mode === 'anonymous') {
     return {
-      label: '匿名降级',
+      label: 'Unavailable',
       tone: 'warn',
-      detail: '未配置小号 Cookie，当前使用匿名通道',
+      detail: `${routeName} 当前没有可用的专属账号，已退回公开通道。`,
       currentMinute,
       remainingMinute,
       lastRequestAt
@@ -57,9 +32,9 @@ const describePool = (pool, account, traffic) => {
 
   if (account.valid === false) {
     return {
-      label: '状态异常',
+      label: 'Unavailable',
       tone: 'bad',
-      detail: mapStatusReason(account.statusReason),
+      detail: `${routeName} 的基础探活未通过。`,
       currentMinute,
       remainingMinute,
       lastRequestAt
@@ -68,9 +43,9 @@ const describePool = (pool, account, traffic) => {
 
   if (account.vipState === 'full') {
     return {
-      label: '全曲可播',
+      label: 'Full access',
       tone: 'good',
-      detail: '付费探针当前可完整播放',
+      detail: `${routeName} 的 VIP 探针当前可完整播放。`,
       currentMinute,
       remainingMinute,
       lastRequestAt
@@ -79,9 +54,9 @@ const describePool = (pool, account, traffic) => {
 
   if (account.vipState === 'preview') {
     return {
-      label: '仅试听',
+      label: 'Preview only',
       tone: 'warn',
-      detail: '付费探针当前只返回试听片段',
+      detail: `${routeName} 的 VIP 探针当前只返回试听片段。`,
       currentMinute,
       remainingMinute,
       lastRequestAt
@@ -90,9 +65,9 @@ const describePool = (pool, account, traffic) => {
 
   if (account.vipState === 'blocked') {
     return {
-      label: 'VIP 探针异常',
+      label: 'Probe issue',
       tone: 'warn',
-      detail: '基础探活正常，但 VIP 探针歌曲没有返回可用播放链接；更像是探针问题或歌曲本身限制，不等同于整个大号池失效',
+      detail: `${routeName} 的基础探活正常，但 VIP 探针歌曲没有返回可用播放链接。`,
       currentMinute,
       remainingMinute,
       lastRequestAt
@@ -101,9 +76,9 @@ const describePool = (pool, account, traffic) => {
 
   if (account.vipState === 'untested') {
     return {
-      label: '未检测',
-      tone: 'warn',
-      detail: '尚未配置 VIP 探针歌曲',
+      label: 'Available',
+      tone: 'good',
+      detail: `${routeName} 的基础探活正常，当前未启用 VIP 探针。`,
       currentMinute,
       remainingMinute,
       lastRequestAt
@@ -111,7 +86,7 @@ const describePool = (pool, account, traffic) => {
   }
 
   return {
-    label: '待确认',
+    label: 'Check needed',
     tone: 'warn',
     detail: mapVipReason(account.vipReason),
     currentMinute,
@@ -133,6 +108,8 @@ const mapStatusReason = (reason) => {
 
 const mapVipReason = (reason) => {
   const map = {
+    'resolved-url-full': 'Resolved URL 指向完整播放链接',
+    'resolved-url-preview': 'Resolved URL 指向试听片段',
     'vip-hash-unset': '未设置 VIP 探针歌曲',
     'vip-probe-no-data': 'VIP 探针无返回',
     'vip-probe-no-url': 'VIP 探针未返回播放链接',
@@ -148,23 +125,15 @@ const mapVipReason = (reason) => {
 
 const mapVipState = (state) => {
   const map = {
-    anonymous: '匿名通道',
-    blocked: '无可用链接',
-    full: '全曲可播',
-    preview: '仅试听',
-    untested: '未检测',
-    unknown: '结果不明确',
-    unreachable: '探针无返回'
+    anonymous: 'Public access',
+    blocked: 'No playable link',
+    full: 'Full access',
+    preview: 'Preview only',
+    untested: 'Untested',
+    unknown: 'Inconclusive',
+    unreachable: 'No probe response'
   }
   return map[state] || state || '未知状态'
-}
-
-const mapMode = (mode) => {
-  const map = {
-    anonymous: '匿名',
-    cookie: 'Cookie'
-  }
-  return map[mode] || mode || '未知'
 }
 
 const mapBoolean = (value, yes, no, unknown = '未适用') => {
@@ -182,18 +151,13 @@ const formatLoad = (load) => {
 
 const buildDiagnostics = (pool, account) => {
   return {
-    mode: mapMode(account.mode),
-    cookie: mapBoolean(account.configured, '已配置', '未配置'),
-    requiredFields: account.mode === 'anonymous'
-      ? '未适用'
-      : mapBoolean(account.requiredFields, '完整', '不完整'),
-    basicProbe: mapBoolean(account.valid, '通过', '失败', '未检测'),
-    routeEligible: mapBoolean(account.routeEligible, '可参与', '不可参与', '未确定'),
+    basicProbe: mapBoolean(account.valid, 'Pass', 'Fail', 'Untested'),
+    routeEligible: mapBoolean(account.routeEligible, 'Yes', 'No', 'Unknown'),
     statusReason: mapStatusReason(account.statusReason),
     vipState: mapVipState(account.vipState),
     vipReason: mapVipReason(account.vipReason),
     load: formatLoad(account.load),
-    pool: pool === 'premium' ? '大号池' : '小号池 / 普通池'
+    pool: pool === 'premium' ? 'Pro' : 'Normal'
   }
 }
 
@@ -202,16 +166,19 @@ export default async (c) => {
   const data = await getKugouAccountStatus(force)
   const premiumAccount = data.accounts?.premium || {}
   const generalAccount = data.accounts?.general || {}
+  const pro = {
+    ...describePool('premium', premiumAccount, data.traffic || {}),
+    diagnostics: buildDiagnostics('premium', premiumAccount)
+  }
+  const normal = {
+    ...describePool('general', generalAccount, data.traffic || {}),
+    diagnostics: buildDiagnostics('general', generalAccount)
+  }
   c.header('cache-control', 'no-store')
 
   return c.json({
     checkedAt: data.checkedAt,
     ttlSeconds: data.ttlSeconds,
-    auth: {
-      premiumKeyConfigured: Boolean(data.auth?.premiumKeyConfigured),
-      premiumByReferrerAllowed: Boolean(data.auth?.premiumByReferrerAllowed),
-      allowHostsCount: Array.isArray(data.auth?.allowHosts) ? data.auth.allowHosts.length : 0
-    },
     summary: {
       currentMinute: data.traffic?.perMinute?.total || 0,
       remainingMinute: data.traffic?.remainingPerMinute?.total || 0,
@@ -231,14 +198,10 @@ export default async (c) => {
       }
     },
     pools: {
-      premium: {
-        ...describePool('premium', premiumAccount, data.traffic || {}),
-        diagnostics: buildDiagnostics('premium', premiumAccount)
-      },
-      general: {
-        ...describePool('general', generalAccount, data.traffic || {}),
-        diagnostics: buildDiagnostics('general', generalAccount)
-      }
+      pro,
+      normal,
+      premium: pro,
+      general: normal
     }
   })
 }
