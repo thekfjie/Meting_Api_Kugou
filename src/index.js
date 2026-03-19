@@ -18,6 +18,7 @@ const app = new Hono()
 app.get(`${config.http.prefix}/api`, apiService)
 app.get(`${config.http.prefix}/music`, apiService)
 app.get(`${config.http.prefix}/demo`, demoService)
+app.get(`${config.http.prefix}/api/monitor/kugou`, kugouMonitorService)
 app.get(`${config.http.prefix}/monitor/kugou`, kugouMonitorService)
 
 serve({
