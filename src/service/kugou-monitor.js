@@ -5,6 +5,41 @@ const describePool = (pool, account, traffic) => {
   const remainingMinute = traffic?.remainingPerMinute?.[pool] || 0
   const lastRequestAt = traffic?.lastRequestAt?.[pool] || null
 
+  if (pool === 'general') {
+    if (account.mode === 'anonymous') {
+      return {
+        label: '匿名可用',
+        tone: 'warn',
+        detail: '当前未配置普通池 Cookie，已回退到匿名通道',
+        currentMinute,
+        remainingMinute,
+        lastRequestAt
+      }
+    }
+
+    if (account.valid === false) {
+      return {
+        label: '普通池异常',
+        tone: 'bad',
+        detail: mapStatusReason(account.statusReason),
+        currentMinute,
+        remainingMinute,
+        lastRequestAt
+      }
+    }
+
+    if (account.valid === true) {
+      return {
+        label: '普通池可用',
+        tone: 'good',
+        detail: '基础探活正常，可继续承担非会员请求',
+        currentMinute,
+        remainingMinute,
+        lastRequestAt
+      }
+    }
+  }
+
   if (account.mode === 'anonymous') {
     return {
       label: '匿名降级',
