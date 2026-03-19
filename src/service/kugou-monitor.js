@@ -4,95 +4,89 @@ const describePool = (pool, account, traffic) => {
   const currentMinute = traffic?.perMinute?.[pool] || 0
   const remainingMinute = traffic?.remainingPerMinute?.[pool] || 0
   const lastRequestAt = traffic?.lastRequestAt?.[pool] || null
+  const exemptRequests = traffic?.exempt?.[pool] || 0
+  const blockedRequests = traffic?.blocked?.[pool] || 0
   const routeName = pool === 'premium' ? 'Pro' : 'Normal'
+  const withTraffic = (payload) => ({
+    ...payload,
+    currentMinute,
+    remainingMinute,
+    lastRequestAt,
+    exemptRequests,
+    blockedRequests
+  })
+
+  if ((account.load?.maxPerMinute || 0) > 0 && remainingMinute <= 0) {
+    return withTraffic({
+      label: 'Minute exhausted',
+      tone: 'warn',
+      detail: `${routeName} 本分钟真实上游请求额度已用尽，新的未缓存解析会在下一分钟恢复。`
+    })
+  }
 
   if (pool === 'general') {
     if (account.mode === 'anonymous') {
-      return {
+      return withTraffic({
         label: 'Public access',
         tone: 'warn',
-        detail: '当前通过公开通道访问，VIP 歌曲通常只会返回试听片段。',
-        currentMinute,
-        remainingMinute,
-        lastRequestAt
-      }
+        detail: '当前通过公开通道访问，VIP 歌曲通常只会返回试听片段。'
+      })
     }
   }
 
   if (account.mode === 'anonymous') {
-    return {
+    return withTraffic({
       label: 'Unavailable',
       tone: 'warn',
-      detail: `${routeName} 当前没有可用的专属账号，已退回公开通道。`,
-      currentMinute,
-      remainingMinute,
-      lastRequestAt
-    }
+      detail: `${routeName} 当前没有可用的专属账号，已退回公开通道。`
+    })
   }
 
   if (account.valid === false) {
-    return {
+    return withTraffic({
       label: 'Unavailable',
       tone: 'bad',
-      detail: `${routeName} 的基础探活未通过。`,
-      currentMinute,
-      remainingMinute,
-      lastRequestAt
-    }
+      detail: `${routeName} 的基础探活未通过。`
+    })
   }
 
   if (account.vipState === 'full') {
-    return {
+    return withTraffic({
       label: 'Full access',
       tone: 'good',
-      detail: `${routeName} 的 VIP 探针当前可完整播放。`,
-      currentMinute,
-      remainingMinute,
-      lastRequestAt
-    }
+      detail: `${routeName} 的 VIP 探针当前可完整播放。`
+    })
   }
 
   if (account.vipState === 'preview') {
-    return {
+    return withTraffic({
       label: 'Preview only',
       tone: 'warn',
-      detail: `${routeName} 的 VIP 探针当前只返回试听片段。`,
-      currentMinute,
-      remainingMinute,
-      lastRequestAt
-    }
+      detail: `${routeName} 的 VIP 探针当前只返回试听片段。`
+    })
   }
 
   if (account.vipState === 'blocked') {
-    return {
+    return withTraffic({
       label: 'Probe issue',
       tone: 'warn',
-      detail: `${routeName} 的基础探活正常，但 VIP 探针歌曲没有返回可用播放链接。`,
-      currentMinute,
-      remainingMinute,
-      lastRequestAt
-    }
+      detail: `${routeName} 的基础探活正常，但 VIP 探针歌曲没有返回可用播放链接。`
+    })
   }
 
   if (account.vipState === 'untested') {
-    return {
+    return withTraffic({
       label: 'Available',
       tone: 'good',
-      detail: `${routeName} 的基础探活正常，当前未启用 VIP 探针。`,
-      currentMinute,
-      remainingMinute,
-      lastRequestAt
-    }
+      detail: `${routeName} 的基础探活正常，当前未启用 VIP 探针。`
+    })
   }
 
-  return {
+  return withTraffic({
     label: 'Check needed',
     tone: 'warn',
-    detail: mapVipReason(account.vipReason),
-    currentMinute,
-    remainingMinute,
-    lastRequestAt
-  }
+    detail: mapVipReason(account.vipReason)
+  })
 }
 
 const mapStatusReason = (reason) => {
@@ -195,6 +189,17 @@ export default async (c) => {
         premiumMiss: data.traffic?.cache?.premiumMiss || 0,
         generalHit: data.traffic?.cache?.generalHit || 0,
         generalMiss: data.traffic?.cache?.generalMiss || 0
+      },
+      exempt: {
+        premium: data.traffic?.exempt?.premium || 0,
+        general: data.traffic?.exempt?.general || 0,
+        blogPlaylist: data.traffic?.exempt?.blogPlaylist || 0,
+        total: data.traffic?.exempt?.total || 0
+      },
+      blocked: {
+        premium: data.traffic?.blocked?.premium || 0,
+        general: data.traffic?.blocked?.general || 0,
+        total: data.traffic?.blocked?.total || 0
       }
     },
     pools: {

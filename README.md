@@ -148,6 +148,7 @@ docker run -d \
 | `SSL_CERT_PATH` | HTTPS 证书文件路径 | - |
 | `METING_URL` | API 服务的公网访问地址(用于生成回调 URL) | - |
 | `METING_TOKEN` | HMAC 签名密钥 | `token` |
+| `METING_KUGOU_PREMIUM_KEY` | 酷狗 Pro 池访问 Key,命中后可在额度内直连 Pro 池 | `` (空) |
 | `METING_COOKIE_ALLOW_HOSTS` | 允许使用 cookie 的 referrer 域名白名单(逗号分隔) | `` (空,不限制) |
 | `METING_COOKIE_NETEASE` | 网易云音乐 Cookie | - |
 | `METING_COOKIE_TENCENT` | QQ音乐 Cookie | - |

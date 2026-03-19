@@ -237,27 +237,15 @@ const probeCookiePool = async (pool) => {
   }
 }
 
-export async function getKugouAccountStatus (force = false) {
-  const ttl = config.meting.kugou.status.ttlMs
-  const now = Date.now()
-
-  if (!force && cachedStatus && now - cachedAt < ttl) {
-    return cachedStatus
-  }
-
-  const [premium, general] = await Promise.all([
-    probeCookiePool('premium'),
-    probeCookiePool('general')
-  ])
-
+const buildStatusPayload = ({ checkedAt, ttl, premium, general }) => {
   const runtime = getKugouRuntimeSnapshot()
   const premiumMaxPerMinute = config.meting.kugou.status.maxRpm.premium || 0
   const generalMaxPerMinute = config.meting.kugou.status.maxRpm.general || 0
   const premiumRemaining = Math.max(0, premiumMaxPerMinute - (runtime.perMinute?.premium || 0))
   const generalRemaining = Math.max(0, generalMaxPerMinute - (runtime.perMinute?.general || 0))
 
-  cachedStatus = {
-    checkedAt: nowIso(),
+  return {
+    checkedAt,
     ttlSeconds: Math.floor(ttl / 1000),
     auth: {
       premiumKeyConfigured: Boolean(config.meting.kugou.premiumKey),
@@ -277,7 +265,39 @@ export async function getKugouAccountStatus (force = false) {
       general: withLoad('general', general, runtime)
     }
   }
+}
+
+export async function getKugouAccountStatus (force = false) {
+  const ttl = config.meting.kugou.status.ttlMs
+  const now = Date.now()
+
+  if (!force && cachedStatus && now - cachedAt < ttl) {
+    return buildStatusPayload({
+      checkedAt: cachedStatus.checkedAt,
+      ttl,
+      premium: cachedStatus.accounts.premium,
+      general: cachedStatus.accounts.general
+    })
+  }
+
+  const [premium, general] = await Promise.all([
+    probeCookiePool('premium'),
+    probeCookiePool('general')
+  ])
+
+  cachedStatus = {
+    checkedAt: nowIso(),
+    accounts: {
+      premium,
+      general
+    }
+  }
   cachedAt = now
 
-  return cachedStatus
+  return buildStatusPayload({
+    checkedAt: cachedStatus.checkedAt,
+    ttl,
+    premium,
+    general
+  })
 }

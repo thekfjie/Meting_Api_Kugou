@@ -23,6 +23,7 @@ const METING_METHODS = {
   url: 'url',
   pic: 'pic'
 }
+const BLOG_PLAYLIST_SOURCE = 'blog-playlist'
 
 export default async (c) => {
   const query = c.req.query()
@@ -31,6 +32,8 @@ export default async (c) => {
   const id = query.id || 'hello'
   const token = query.token || query.auth || 'token'
   const requestKey = query.key || ''
+  const requestSource = query.source || ''
+  const hasPremiumKey = server === 'kugou' && hasValidKugouPremiumKey(requestKey)
 
   if (!['netease', 'tencent', 'kugou', 'baidu', 'kuwo'].includes(server)) {
     throw new HTTPException(400, { message: 'server 参数不合法' })
@@ -40,7 +43,7 @@ export default async (c) => {
   }
 
   if (['lrc', 'url', 'pic'].includes(type)) {
-    if (auth(server, type, id) !== token) {
+    if (!hasPremiumKey && auth(server, type, id) !== token) {
       throw new HTTPException(401, { message: '鉴权失败,非法调用' })
     }
   }
@@ -60,11 +63,26 @@ export default async (c) => {
   let data = cache.get(cacheKey)
   const cacheHit = data !== undefined
   if (server === 'kugou') {
-    recordKugouRequest({
+    const quotaExempt = shouldExemptKugouQuota({
+      server,
+      kugouPool,
+      reason: kugouRoute.reason,
+      requestSource
+    })
+    const quotaState = recordKugouRequest({
       pool: kugouPool,
       reason: kugouRoute.reason,
-      cacheHit
+      cacheHit,
+      countTowardQuota: !cacheHit && !quotaExempt,
+      exemptTag: quotaExempt ? requestSource : ''
     })
+
+    if (quotaState && !quotaState.allowed) {
+      c.header('x-cache', 'miss')
+      throw new HTTPException(429, {
+        message: `${mapKugouPoolName(kugouPool)} 池本分钟额度已用尽，请等待下一分钟刷新`
+      })
+    }
   }
 
   if (data === undefined) {
@@ -185,6 +203,7 @@ export default async (c) => {
         type: 'url',
         id: urlId,
         requestKey,
+        requestSource,
         kugouPool
       }),
       pic: buildResourceUrl({
@@ -192,6 +211,7 @@ export default async (c) => {
         type: 'pic',
         id: picId,
         requestKey,
+        requestSource,
         kugouPool
       }),
       lrc: buildResourceUrl({
@@ -199,6 +219,7 @@ export default async (c) => {
         type: 'lrc',
         id: lrcId,
         requestKey,
+        requestSource,
         kugouPool
       })
     }
@@ -225,6 +246,16 @@ const resolveKugouPool = ({ server, referrer, allowCookie, requestKey }) => {
   return { pool: 'general', reason: 'fallback' }
 }
 
+const shouldExemptKugouQuota = ({ server, kugouPool, reason, requestSource }) => {
+  if (server !== 'kugou') return false
+  if (requestSource !== BLOG_PLAYLIST_SOURCE) return false
+  return kugouPool === 'premium' && reason === 'referrer'
+}
+
+const mapKugouPoolName = (pool) => {
+  return pool === 'premium' ? 'Pro' : 'Normal'
+}
+
 const getCacheMode = ({ server, allowCookie, kugouPool }) => {
   if (server === 'kugou') {
     return kugouPool
@@ -237,12 +268,15 @@ const getCookiePool = ({ server, allowCookie, kugouPool }) => {
   return allowCookie ? 'default' : ''
 }
 
-const buildResourceUrl = ({ server, type, id, requestKey, kugouPool }) => {
+const buildResourceUrl = ({ server, type, id, requestKey, requestSource, kugouPool }) => {
   const url = new URL(`${config.meting.url}/music`)
   url.searchParams.set('server', server)
   url.searchParams.set('type', type)
   url.searchParams.set('id', id)
   url.searchParams.set('auth', auth(server, type, id))
+  if (server === 'kugou' && kugouPool === 'premium' && requestSource === BLOG_PLAYLIST_SOURCE) {
+    url.searchParams.set('source', requestSource)
+  }
   if (server === 'kugou' && kugouPool === 'premium' && hasValidKugouPremiumKey(requestKey)) {
     url.searchParams.set('key', requestKey)
   }
