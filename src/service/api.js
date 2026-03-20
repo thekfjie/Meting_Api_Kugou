@@ -11,7 +11,11 @@ import {
   getKugouPlaylistFromShare,
   normalizeKugouSharePlaylistInput
 } from '../utils/kugou-share-playlist.js'
-import { recordKugouRequest } from '../utils/kugou-runtime.js'
+import {
+  peekKugouQuota,
+  recordKugouBlocked,
+  recordKugouRequest
+} from '../utils/kugou-runtime.js'
 import { LRUCache } from 'lru-cache'
 
 const cache = new LRUCache({
@@ -32,6 +36,8 @@ const METING_METHODS = {
 const BLOG_PLAYLIST_SOURCE = 'blog-playlist'
 
 export default async (c) => {
+  c.header('access-control-expose-headers', 'x-cache, x-kugou-route, x-kugou-notice')
+
   const query = c.req.query()
   const server = query.server || 'netease'
   const rawType = query.type || 'search'
@@ -45,6 +51,8 @@ export default async (c) => {
   if (server === 'kugou' && type === 'playlist') {
     id = normalizeKugouSharePlaylistInput(id) || id
   }
+
+  const isKugouSharePlaylist = server === 'kugou' && type === 'playlist' && canUseKugouSharePlaylist(id)
 
   if (!['netease', 'tencent', 'kugou', 'baidu', 'kuwo'].includes(server)) {
     throw new HTTPException(400, { message: 'server 参数不合法' })
@@ -68,11 +76,16 @@ export default async (c) => {
     requestKey
   })
   const kugouPool = kugouRoute.pool
-  const cacheMode = getCacheMode({ server, allowCookie, kugouPool })
+  let effectiveKugouPool = kugouPool
+  let fallbackNotice = ''
+  const buildCacheKey = (pool) => {
+    const cacheMode = getCacheMode({ server, allowCookie, kugouPool: pool })
+    return `${server}/${type}/${id}/${cacheMode}`
+  }
 
-  const cacheKey = `${server}/${type}/${id}/${cacheMode}`
+  let cacheKey = buildCacheKey(effectiveKugouPool)
   let data = cache.get(cacheKey)
-  const cacheHit = data !== undefined
+  let cacheHit = data !== undefined
   if (server === 'kugou') {
     const quotaExempt = shouldExemptKugouQuota({
       server,
@@ -80,19 +93,56 @@ export default async (c) => {
       reason: kugouRoute.reason,
       requestSource
     })
-    const quotaState = recordKugouRequest({
-      pool: kugouPool,
-      reason: kugouRoute.reason,
-      cacheHit,
-      countTowardQuota: !cacheHit && !quotaExempt,
-      exemptTag: quotaExempt ? requestSource : ''
-    })
+    if (effectiveKugouPool === 'premium' || effectiveKugouPool === 'general') {
+      if (cacheHit) {
+        recordKugouRequest({
+          pool: effectiveKugouPool,
+          reason: kugouRoute.reason,
+          cacheHit: true,
+          countTowardQuota: false,
+          exemptTag: ''
+        })
+      } else if (quotaExempt) {
+        recordKugouRequest({
+          pool: effectiveKugouPool,
+          reason: kugouRoute.reason,
+          cacheHit: false,
+          countTowardQuota: false,
+          exemptTag: requestSource
+        })
+      } else {
+        const quotaState = peekKugouQuota(effectiveKugouPool)
 
-    if (quotaState && !quotaState.allowed) {
-      c.header('x-cache', 'miss')
-      throw new HTTPException(429, {
-        message: `${mapKugouPoolName(kugouPool)} 池本分钟额度已用尽，请等待下一分钟刷新`
-      })
+        if (!quotaState.allowed) {
+          recordKugouBlocked({
+            pool: effectiveKugouPool,
+            reason: kugouRoute.reason
+          })
+
+          if (effectiveKugouPool === 'general') {
+            effectiveKugouPool = 'internal'
+            fallbackNotice = '普通线路繁忙，已切换至游客线路，VIP 歌曲可能仅支持试听'
+            c.header('x-kugou-route', 'internal-fallback')
+            c.header('x-kugou-notice', encodeURIComponent(fallbackNotice))
+            cacheKey = buildCacheKey(effectiveKugouPool)
+            data = cache.get(cacheKey)
+            cacheHit = data !== undefined
+          } else {
+            c.header('x-cache', 'miss')
+            throw new HTTPException(429, {
+              message: `${mapKugouPoolName(effectiveKugouPool)} 池本分钟额度已用尽，请等待下一分钟刷新`
+            })
+          }
+        } else {
+          recordKugouRequest({
+            pool: effectiveKugouPool,
+            reason: kugouRoute.reason,
+            cacheHit: false,
+            countTowardQuota: true,
+            exemptTag: ''
+          })
+        }
+      }
     }
   }
 
@@ -101,7 +151,7 @@ export default async (c) => {
     const meting = new Meting(server)
     meting.format(true)
 
-    const cookiePool = getCookiePool({ server, allowCookie, kugouPool })
+    const cookiePool = getCookiePool({ server, allowCookie, kugouPool: effectiveKugouPool })
     const cookie = cookiePool
       ? await readCookieFile(server, cookiePool)
       : ''
@@ -115,7 +165,7 @@ export default async (c) => {
     }
 
     if (data === undefined) {
-      if (server === 'kugou' && type === 'playlist' && canUseKugouSharePlaylist(id)) {
+      if (isKugouSharePlaylist) {
         data = await getKugouPlaylistFromShare(id)
       }
 
@@ -136,8 +186,15 @@ export default async (c) => {
       }
     }
     cache.set(cacheKey, data, {
-      ttl: type === 'url' ? 1000 * 60 * 10 : 1000 * 60 * 60
+      ttl: isKugouSharePlaylist
+        ? 1000 * 30
+        : (type === 'url' ? 1000 * 60 * 10 : 1000 * 60 * 60)
     })
+  }
+
+  if (fallbackNotice) {
+    c.header('x-kugou-route', 'internal-fallback')
+    c.header('x-kugou-notice', encodeURIComponent(fallbackNotice))
   }
 
   if (type === 'url') {
@@ -221,7 +278,7 @@ export default async (c) => {
         id: urlId,
         requestKey,
         requestSource,
-        kugouPool
+        kugouPool: effectiveKugouPool
       }),
       pic: buildResourceUrl({
         server,
@@ -229,7 +286,7 @@ export default async (c) => {
         id: picId,
         requestKey,
         requestSource,
-        kugouPool
+        kugouPool: effectiveKugouPool
       }),
       lrc: buildResourceUrl({
         server,
@@ -237,7 +294,7 @@ export default async (c) => {
         id: lrcId,
         requestKey,
         requestSource,
-        kugouPool
+        kugouPool: effectiveKugouPool
       })
     }
   }))
@@ -270,18 +327,22 @@ const shouldExemptKugouQuota = ({ server, kugouPool, reason, requestSource }) =>
 }
 
 const mapKugouPoolName = (pool) => {
-  return pool === 'premium' ? 'Pro' : 'Normal'
+  if (pool === 'premium') return 'Pro'
+  if (pool === 'internal') return 'Guest'
+  return 'Normal (CK)'
 }
 
 const getCacheMode = ({ server, allowCookie, kugouPool }) => {
   if (server === 'kugou') {
-    return kugouPool
+    return (kugouPool === 'premium' || kugouPool === 'general') ? kugouPool : 'internal'
   }
   return allowCookie ? 'cookie' : 'anon'
 }
 
 const getCookiePool = ({ server, allowCookie, kugouPool }) => {
-  if (server === 'kugou') return kugouPool
+  if (server === 'kugou') {
+    return (kugouPool === 'premium' || kugouPool === 'general') ? kugouPool : ''
+  }
   return allowCookie ? 'default' : ''
 }
 

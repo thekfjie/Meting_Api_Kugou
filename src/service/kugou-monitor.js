@@ -6,7 +6,7 @@ const describePool = (pool, account, traffic) => {
   const lastRequestAt = traffic?.lastRequestAt?.[pool] || null
   const exemptRequests = traffic?.exempt?.[pool] || 0
   const blockedRequests = traffic?.blocked?.[pool] || 0
-  const routeName = pool === 'premium' ? 'Pro' : 'Normal'
+  const routeName = mapPoolName(pool)
   const withTraffic = (payload) => ({
     ...payload,
     currentMinute,
@@ -24,12 +24,44 @@ const describePool = (pool, account, traffic) => {
     })
   }
 
-  if (pool === 'general') {
-    if (account.mode === 'anonymous') {
+  if (pool === 'internal') {
+    if (account.valid === false) {
       return withTraffic({
-        label: 'Public access',
+        label: 'Unavailable',
+        tone: 'bad',
+        detail: 'Internal 基础游客服务探活失败，当前匿名解析不可用。'
+      })
+    }
+
+    if (account.vipState === 'preview') {
+      return withTraffic({
+        label: 'Preview only',
         tone: 'warn',
-        detail: '当前通过公开通道访问，VIP 歌曲通常只会返回试听片段。'
+        detail: 'Internal 基础游客服务可用，但 VIP 探针当前只返回试听片段。'
+      })
+    }
+
+    if (account.vipState === 'full') {
+      return withTraffic({
+        label: 'Full access',
+        tone: 'good',
+        detail: 'Internal 基础游客服务当前可返回完整播放链接。'
+      })
+    }
+
+    if (account.vipState === 'blocked') {
+      return withTraffic({
+        label: 'Guest only',
+        tone: 'warn',
+        detail: 'Internal 基础游客服务可用，但 VIP 探针当前没有可用播放链接。'
+      })
+    }
+
+    if (account.vipState === 'untested') {
+      return withTraffic({
+        label: 'Available',
+        tone: 'good',
+        detail: 'Internal 基础游客服务可用，当前未启用 VIP 探针。'
       })
     }
   }
@@ -94,6 +126,7 @@ const mapStatusReason = (reason) => {
     'missing-cookie': '未配置对应 Cookie',
     'missing-required-fields': 'Cookie 关键字段不完整',
     'songinfo-probe-failed': '基础探活失败',
+    'anonymous-probe-failed': '匿名基础探活失败',
     ok: '状态正常',
     'anonymous-fallback': '匿名通道'
   }
@@ -151,8 +184,15 @@ const buildDiagnostics = (pool, account) => {
     vipState: mapVipState(account.vipState),
     vipReason: mapVipReason(account.vipReason),
     load: formatLoad(account.load),
-    pool: pool === 'premium' ? 'Pro' : 'Normal'
+    pool: mapPoolName(pool)
   }
+}
+
+const mapPoolName = (pool) => {
+  if (pool === 'premium') return 'Pro'
+  if (pool === 'general') return 'Normal (CK)'
+  if (pool === 'internal') return 'Internal (Guest)'
+  return pool || 'Unknown'
 }
 
 export default async (c) => {
@@ -160,6 +200,7 @@ export default async (c) => {
   const data = await getKugouAccountStatus(force)
   const premiumAccount = data.accounts?.premium || {}
   const generalAccount = data.accounts?.general || {}
+  const internalAccount = data.accounts?.internal || {}
   const pro = {
     ...describePool('premium', premiumAccount, data.traffic || {}),
     diagnostics: buildDiagnostics('premium', premiumAccount)
@@ -167,6 +208,10 @@ export default async (c) => {
   const normal = {
     ...describePool('general', generalAccount, data.traffic || {}),
     diagnostics: buildDiagnostics('general', generalAccount)
+  }
+  const internal = {
+    ...describePool('internal', internalAccount, data.traffic || {}),
+    diagnostics: buildDiagnostics('internal', internalAccount)
   }
   c.header('cache-control', 'no-store')
 
@@ -205,8 +250,7 @@ export default async (c) => {
     pools: {
       pro,
       normal,
-      premium: pro,
-      general: normal
+      internal
     }
   })
 }

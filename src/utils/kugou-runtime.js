@@ -56,6 +56,52 @@ const getRemainingPerMinute = (pool, currentPerMinute = state.recent[pool]?.leng
   return Math.max(0, maxPerMinute - currentPerMinute)
 }
 
+const applyReasonStats = (reason) => {
+  if (reason === 'key') state.requests.byKey += 1
+  if (reason === 'referrer') state.requests.byReferrer += 1
+  if (reason === 'fallback') state.requests.fallback += 1
+}
+
+export function peekKugouQuota (pool) {
+  if (pool !== 'premium' && pool !== 'general') {
+    return {
+      allowed: true,
+      currentPerMinute: 0,
+      remainingPerMinute: 0
+    }
+  }
+
+  refreshMinuteWindow()
+  const currentPerMinute = state.recent[pool].length
+  const maxPerMinute = getMaxPerMinute(pool)
+  const allowed = maxPerMinute <= 0 || currentPerMinute < maxPerMinute
+
+  return {
+    allowed,
+    currentPerMinute,
+    remainingPerMinute: allowed ? getRemainingPerMinute(pool, currentPerMinute) : 0
+  }
+}
+
+export function recordKugouBlocked ({ pool, reason }) {
+  if (pool !== 'premium' && pool !== 'general') return
+
+  const now = Date.now()
+  refreshMinuteWindow(now)
+
+  state.requests[pool] += 1
+  state.lastRequestAt[pool] = new Date(now).toISOString()
+  applyReasonStats(reason)
+  state.blocked[pool] += 1
+
+  return {
+    allowed: false,
+    currentPerMinute: state.recent[pool].length,
+    remainingPerMinute: 0,
+    countedTowardQuota: false
+  }
+}
+
 export function recordKugouRequest ({
   pool,
   reason,
@@ -71,9 +117,7 @@ export function recordKugouRequest ({
   state.requests[pool] += 1
   state.lastRequestAt[pool] = new Date(now).toISOString()
 
-  if (reason === 'key') state.requests.byKey += 1
-  if (reason === 'referrer') state.requests.byReferrer += 1
-  if (reason === 'fallback') state.requests.fallback += 1
+  applyReasonStats(reason)
 
   const bucket = `${pool}${cacheHit ? 'Hit' : 'Miss'}`
   state.cache[bucket] += 1
@@ -94,12 +138,12 @@ export function recordKugouRequest ({
     }
   }
 
-  const maxPerMinute = getMaxPerMinute(pool)
-  if (maxPerMinute > 0 && state.recent[pool].length >= maxPerMinute) {
+  const quotaState = peekKugouQuota(pool)
+  if (!quotaState.allowed) {
     state.blocked[pool] += 1
     return {
       allowed: false,
-      currentPerMinute: state.recent[pool].length,
+      currentPerMinute: quotaState.currentPerMinute,
       remainingPerMinute: 0,
       countedTowardQuota: false
     }

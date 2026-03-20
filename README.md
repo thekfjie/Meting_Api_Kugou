@@ -316,6 +316,35 @@ METING_COOKIE_ALLOW_HOSTS=example.com,music.example.com
 
 不设置时不限制来源。这可以防止 Cookie 被第三方滥用。
 
+## Kugou 监控状态说明
+
+`/monitor/kugou` 用来观察酷狗路由池当前能力。这里有两类字段容易混淆:
+
+### 池子名称
+
+- `Pro`: 命中有效 `key` 或命中 Referrer 白名单的对外池,优先走 Pro Cookie
+- `Normal (CK)`: 未命中 Pro 条件的对外普通池,使用 `METING_COOKIE_KUGOU_GENERAL`
+- `Internal (Guest)`: 内部匿名基础池,不依赖 Cookie,只在 `/monitor/kugou` 返回中可见
+
+当前运行逻辑中,`Normal (CK)` 超过分钟额度后会自动回退到 `Internal (Guest)`。这时非 VIP 歌通常仍可解析,VIP 歌可能只剩试听能力。
+
+### 能力状态
+
+- `Full access`: VIP 探针歌曲可拿到完整播放链接
+- `Preview only`: VIP 探针歌曲只能拿到试听片段,通常约 1 分钟
+- `Unavailable`: 对应池子的 Cookie 不可用,或基础探活未通过
+- `Probe issue`: 基础探活正常,但 VIP 探针歌曲未返回可用播放链接
+- `Guest only`: 基础游客服务可用,但 VIP 探针没有可用播放链接
+- `Available`: 基础探活正常,但当前未启用 VIP 探针,只能确认池子可用
+- `Minute exhausted`: 当前分钟内计入额度的真实上游请求已用尽,需等待下一分钟刷新
+
+### 额度相关字段
+
+- `currentMinute`: 当前分钟内计入额度的真实上游请求数,只统计未命中缓存的上游解析
+- `remainingMinute`: 当前分钟剩余额度
+- `exemptRequests`: 已豁免但未计入额度的请求数
+- `blockedRequests`: 因分钟额度耗尽而被直接拦截的请求数
+
 ## 错误处理
 
 API 返回标准 HTTP 状态码:

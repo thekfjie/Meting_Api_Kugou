@@ -11,6 +11,11 @@ const nowIso = () => new Date().toISOString()
 
 const getPlayableUrl = (data) => data?.play_url || data?.play_backup_url || ''
 
+const getFirstItem = (data) => {
+  if (Array.isArray(data)) return data[0] || null
+  return data && typeof data === 'object' ? data : null
+}
+
 const getKugouResolvedUrl = async ({ hash, cookie }) => {
   if (!hash || !cookie) return ''
 
@@ -18,6 +23,35 @@ const getKugouResolvedUrl = async ({ hash, cookie }) => {
     const meting = new Meting('kugou')
     meting.format(true)
     meting.cookie(cookie)
+
+    const response = await meting.url(String(hash).toUpperCase())
+    const data = JSON.parse(response)
+    return typeof data?.url === 'string' ? data.url : ''
+  } catch (error) {
+    return ''
+  }
+}
+
+const getKugouAnonymousSong = async (hash) => {
+  if (!hash) return null
+
+  try {
+    const meting = new Meting('kugou')
+    meting.format(true)
+
+    const response = await meting.song(String(hash).toUpperCase())
+    return getFirstItem(JSON.parse(response))
+  } catch (error) {
+    return null
+  }
+}
+
+const getKugouAnonymousResolvedUrl = async (hash) => {
+  if (!hash) return ''
+
+  try {
+    const meting = new Meting('kugou')
+    meting.format(true)
 
     const response = await meting.url(String(hash).toUpperCase())
     const data = JSON.parse(response)
@@ -126,35 +160,82 @@ const hasRequiredFields = (cookie) => {
   return Boolean(cookie.t && cookie.KugooID && (cookie.mid || cookie.kg_mid) && (cookie.dfid || cookie.kg_dfid))
 }
 
-const buildGeneralAnonymousStatus = () => ({
-  mode: 'anonymous',
-  configured: false,
-  requiredFields: false,
-  valid: null,
-  vip: null,
-  vipState: 'anonymous',
-  routeEligible: true,
-  statusReason: 'anonymous-fallback',
-  vipReason: 'not-tested'
-})
+const buildInternalStatus = async () => {
+  const basicData = await getKugouAnonymousSong(config.meting.kugou.status.freeHash)
+  const basicUrl = await getKugouAnonymousResolvedUrl(config.meting.kugou.status.freeHash)
+  const valid = Boolean(
+    basicUrl ||
+    basicData?.hash ||
+    basicData?.songName ||
+    basicData?.name ||
+    basicData?.url
+  )
+
+  if (!valid) {
+    return {
+      mode: 'anonymous',
+      configured: true,
+      requiredFields: true,
+      valid: false,
+      vip: false,
+      vipState: 'unreachable',
+      routeEligible: true,
+      statusReason: 'anonymous-probe-failed',
+      vipReason: 'not-tested'
+    }
+  }
+
+  if (!config.meting.kugou.status.vipHash) {
+    return {
+      mode: 'anonymous',
+      configured: true,
+      requiredFields: true,
+      valid: true,
+      vip: null,
+      vipState: 'untested',
+      routeEligible: true,
+      statusReason: 'ok',
+      vipReason: 'vip-hash-unset'
+    }
+  }
+
+  const [vipSong, vipResolvedUrl] = await Promise.all([
+    getKugouAnonymousSong(config.meting.kugou.status.vipHash),
+    getKugouAnonymousResolvedUrl(config.meting.kugou.status.vipHash)
+  ])
+  const vipResult = classifyVipCapability({
+    songinfo: vipSong,
+    resolvedUrl: vipResolvedUrl
+  })
+
+  return {
+    mode: 'anonymous',
+    configured: true,
+    requiredFields: true,
+    valid: true,
+    vip: vipResult.vip,
+    vipState: vipResult.vipState,
+    routeEligible: true,
+    statusReason: 'ok',
+    vipReason: vipResult.vipReason
+  }
+}
 
 const probeCookiePool = async (pool) => {
   const cookie = await readCookieFile('kugou', pool)
 
   if (!cookie) {
-    return pool === 'general'
-      ? buildGeneralAnonymousStatus()
-      : {
-          mode: 'cookie',
-          configured: false,
-          requiredFields: false,
-          valid: false,
-          vip: null,
-          vipState: 'untested',
-          routeEligible: false,
-          statusReason: 'missing-cookie',
-          vipReason: 'not-tested'
-        }
+    return {
+      mode: 'cookie',
+      configured: false,
+      requiredFields: false,
+      valid: false,
+      vip: null,
+      vipState: 'untested',
+      routeEligible: false,
+      statusReason: 'missing-cookie',
+      vipReason: 'not-tested'
+    }
   }
 
   const parsed = parseKugouCookie(cookie)
@@ -237,7 +318,7 @@ const probeCookiePool = async (pool) => {
   }
 }
 
-const buildStatusPayload = ({ checkedAt, ttl, premium, general }) => {
+const buildStatusPayload = ({ checkedAt, ttl, premium, general, internal }) => {
   const runtime = getKugouRuntimeSnapshot()
   const premiumMaxPerMinute = config.meting.kugou.status.maxRpm.premium || 0
   const generalMaxPerMinute = config.meting.kugou.status.maxRpm.general || 0
@@ -262,7 +343,8 @@ const buildStatusPayload = ({ checkedAt, ttl, premium, general }) => {
     },
     accounts: {
       premium: withLoad('premium', premium, runtime),
-      general: withLoad('general', general, runtime)
+      general: withLoad('general', general, runtime),
+      internal
     }
   }
 }
@@ -276,20 +358,23 @@ export async function getKugouAccountStatus (force = false) {
       checkedAt: cachedStatus.checkedAt,
       ttl,
       premium: cachedStatus.accounts.premium,
-      general: cachedStatus.accounts.general
+      general: cachedStatus.accounts.general,
+      internal: cachedStatus.accounts.internal
     })
   }
 
-  const [premium, general] = await Promise.all([
+  const [premium, general, internal] = await Promise.all([
     probeCookiePool('premium'),
-    probeCookiePool('general')
+    probeCookiePool('general'),
+    buildInternalStatus()
   ])
 
   cachedStatus = {
     checkedAt: nowIso(),
     accounts: {
       premium,
-      general
+      general,
+      internal
     }
   }
   cachedAt = now
@@ -298,6 +383,7 @@ export async function getKugouAccountStatus (force = false) {
     checkedAt: cachedStatus.checkedAt,
     ttl,
     premium,
-    general
+    general,
+    internal
   })
 }
