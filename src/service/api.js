@@ -6,6 +6,11 @@ import config from '../config.js'
 import { format as lyricFormat } from '../utils/lyric.js'
 import { readCookieFile, isAllowedHost } from '../utils/cookie.js'
 import { getKugouCoverFromSonginfo } from '../utils/kugou-songinfo.js'
+import {
+  canUseKugouSharePlaylist,
+  getKugouPlaylistFromShare,
+  normalizeKugouSharePlaylistInput
+} from '../utils/kugou-share-playlist.js'
 import { recordKugouRequest } from '../utils/kugou-runtime.js'
 import { LRUCache } from 'lru-cache'
 
@@ -19,6 +24,7 @@ const METING_METHODS = {
   album: 'album',
   artist: 'artist',
   playlist: 'playlist',
+  songlist: 'playlist',
   lrc: 'lyric',
   url: 'url',
   pic: 'pic'
@@ -28,17 +34,22 @@ const BLOG_PLAYLIST_SOURCE = 'blog-playlist'
 export default async (c) => {
   const query = c.req.query()
   const server = query.server || 'netease'
-  const type = query.type || 'search'
-  const id = query.id || 'hello'
+  const rawType = query.type || 'search'
+  const type = rawType === 'songlist' ? 'playlist' : rawType
+  let id = query.id || 'hello'
   const token = query.token || query.auth || 'token'
   const requestKey = query.key || ''
   const requestSource = query.source || ''
   const hasPremiumKey = server === 'kugou' && hasValidKugouPremiumKey(requestKey)
 
+  if (server === 'kugou' && type === 'playlist') {
+    id = normalizeKugouSharePlaylistInput(id) || id
+  }
+
   if (!['netease', 'tencent', 'kugou', 'baidu', 'kuwo'].includes(server)) {
     throw new HTTPException(400, { message: 'server 参数不合法' })
   }
-  if (!['song', 'album', 'search', 'artist', 'playlist', 'lrc', 'url', 'pic'].includes(type)) {
+  if (!['song', 'album', 'search', 'artist', 'playlist', 'songlist', 'lrc', 'url', 'pic'].includes(rawType)) {
     throw new HTTPException(400, { message: 'type 参数不合法' })
   }
 
@@ -104,18 +115,24 @@ export default async (c) => {
     }
 
     if (data === undefined) {
-      const method = METING_METHODS[type]
-      let response
-      try {
-        response = await meting[method](id)
-      } catch (error) {
-        throw new HTTPException(500, { message: '上游 API 调用失败' })
+      if (server === 'kugou' && type === 'playlist' && canUseKugouSharePlaylist(id)) {
+        data = await getKugouPlaylistFromShare(id)
       }
 
-      try {
-        data = JSON.parse(response)
-      } catch (error) {
-        throw new HTTPException(500, { message: '上游 API 返回格式异常' })
+      if (data === undefined) {
+        const method = METING_METHODS[type]
+        let response
+        try {
+          response = await meting[method](id)
+        } catch (error) {
+          throw new HTTPException(500, { message: '上游 API 调用失败' })
+        }
+
+        try {
+          data = JSON.parse(response)
+        } catch (error) {
+          throw new HTTPException(500, { message: '上游 API 返回格式异常' })
+        }
       }
     }
     cache.set(cacheKey, data, {
