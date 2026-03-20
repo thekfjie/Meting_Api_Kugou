@@ -5,7 +5,11 @@ import { HTTPException } from 'hono/http-exception'
 import config from '../config.js'
 import { format as lyricFormat } from '../utils/lyric.js'
 import { readCookieFile, isAllowedHost } from '../utils/cookie.js'
-import { getKugouCoverFromSonginfo } from '../utils/kugou-songinfo.js'
+import {
+  getKugouCoverFromPublicSong,
+  getKugouCoverFromSonginfo,
+  getKugouPublicSong
+} from '../utils/kugou-songinfo.js'
 import {
   canUseKugouSharePlaylist,
   getKugouPlaylistFromShare,
@@ -164,6 +168,20 @@ export default async (c) => {
       }
     }
 
+    if (server === 'kugou' && type === 'pic' && data === undefined) {
+      const publicCover = await getKugouCoverFromPublicSong({ hash: id, size: 400 })
+      if (publicCover) {
+        data = publicCover
+      }
+    }
+
+    if (server === 'kugou' && type === 'song' && data === undefined) {
+      const publicSong = await getKugouPublicSong(id)
+      if (publicSong) {
+        data = publicSong
+      }
+    }
+
     if (data === undefined) {
       if (isKugouSharePlaylist) {
         data = await getKugouPlaylistFromShare(id)
@@ -248,11 +266,13 @@ export default async (c) => {
   const safeData = Array.isArray(data) ? data : (data.error ? [] : [data])
   return c.json(safeData.map(x => {
     // 兼容标准格式(name)与酷狗原始格式(songName)
-    const title = x.name || x.songName || '未知歌曲'
+    const title = x.title || x.name || x.songName || '未知歌曲'
 
     // 兼容歌手格式
     let author = '未知歌手'
-    if (Array.isArray(x.artist)) {
+    if (typeof x.author === 'string' && x.author) {
+      author = x.author
+    } else if (Array.isArray(x.artist)) {
       author = x.artist.join(' / ')
     } else if (Array.isArray(x.authors)) {
       author = x.authors.map(a => a.author_name).join(' / ') // 提取酷狗的歌手名

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 
 const SIGN_KEY = 'NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt'
+const KUGOU_PUBLIC_SONGINFO_URL = 'https://m.kugou.com/app/i/getSongInfo.php'
 
 function parseCookie (cookie = '') {
   const out = {}
@@ -53,6 +54,161 @@ function normalizeCoverUrl (url, size = 400) {
     out = `https://${out.slice('http://'.length)}`
   }
   return out
+}
+
+function normalizeHash (hash = '') {
+  return String(hash || '').trim().toUpperCase()
+}
+
+function pickFirstText (...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  return ''
+}
+
+function splitKugouFileName (fileName = '') {
+  const raw = String(fileName || '').trim()
+  if (!raw) {
+    return { name: '', artists: [] }
+  }
+
+  const parts = raw.split(' - ')
+  if (parts.length < 2) {
+    return { name: raw, artists: [] }
+  }
+
+  const name = parts.pop()?.trim() || ''
+  const artistText = parts.join(' - ').trim()
+  if (!artistText) {
+    return { name, artists: [] }
+  }
+
+  const artists = artistText
+    .split(/\s*[/、,&]\s*/)
+    .map(item => item.trim())
+    .filter(Boolean)
+
+  return { name, artists }
+}
+
+function extractKugouArtists (data) {
+  if (Array.isArray(data?.authors) && data.authors.length > 0) {
+    return data.authors
+      .map(item => pickFirstText(item?.author_name, item?.name))
+      .filter(Boolean)
+  }
+
+  const authorName = pickFirstText(data?.author_name, data?.singerName, data?.singer)
+  if (authorName) {
+    return authorName
+      .split(/\s*[/、,&]\s*/)
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  return splitKugouFileName(data?.fileName || data?.filename).artists
+}
+
+function normalizeKugouSong (data) {
+  if (!data || typeof data !== 'object') return null
+
+  const hash = normalizeHash(data.hash || data.req_hash)
+  if (!hash) return null
+
+  const fileName = pickFirstText(data.fileName, data.filename)
+  const split = splitKugouFileName(fileName)
+  const name = pickFirstText(data.songName, data.song_name, split.name)
+  const artist = extractKugouArtists(data)
+
+  return {
+    id: hash,
+    hash,
+    name,
+    title: name,
+    artist,
+    author: artist.join(' / '),
+    album: pickFirstText(data.album_name, data.albumName),
+    url_id: hash,
+    pic_id: hash,
+    lyric_id: hash,
+    source: 'kugou'
+  }
+}
+
+function extractKugouPublicCover (data, size = 400) {
+  const cover = pickFirstText(
+    data?.trans_param?.union_cover,
+    data?.album_img,
+    data?.imgUrl,
+    data?.img,
+    data?.sizable_cover
+  )
+  const url = normalizeCoverUrl(cover, size)
+  return url ? { url } : null
+}
+
+export async function getKugouPublicSong (hash) {
+  const normalizedHash = normalizeHash(hash)
+  if (!normalizedHash) return null
+
+  try {
+    const res = await fetch(KUGOU_PUBLIC_SONGINFO_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': 'IPhone-8990-searchSong',
+        'UNI-UserAgent': 'iOS11.4-Phone8990-1009-0-WiFi'
+      },
+      body: new URLSearchParams({
+        cmd: 'playInfo',
+        hash: normalizedHash,
+        from: 'mkugou'
+      })
+    })
+
+    if (!res.ok) return null
+
+    const json = await res.json()
+    return normalizeKugouSong(json)
+  } catch (error) {
+    return null
+  }
+}
+
+export async function getKugouCoverFromPublicSong ({
+  hash,
+  size = 400
+}) {
+  const normalizedHash = normalizeHash(hash)
+  if (!normalizedHash) return null
+
+  try {
+    const res = await fetch(KUGOU_PUBLIC_SONGINFO_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': 'IPhone-8990-searchSong',
+        'UNI-UserAgent': 'iOS11.4-Phone8990-1009-0-WiFi'
+      },
+      body: new URLSearchParams({
+        cmd: 'playInfo',
+        hash: normalizedHash,
+        from: 'mkugou'
+      })
+    })
+
+    if (!res.ok) return null
+
+    const json = await res.json()
+    return extractKugouPublicCover(json, size)
+  } catch (error) {
+    return null
+  }
 }
 
 export async function getKugouSonginfo ({
