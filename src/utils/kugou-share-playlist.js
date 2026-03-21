@@ -80,7 +80,9 @@ const parseSharePlaylistData = (html) => {
     try {
       const parsed = JSON.parse(match[1])
       if (Array.isArray(parsed)) return parsed
-    } catch {}
+    } catch (err) {
+    console.error('[share-playlist] Case 3 error:', err.message || err)
+  }
   }
 
   return []
@@ -281,6 +283,7 @@ export const getKugouPlaylistFromShare = async (value) => {
 
   // ── Case 1: Fresh cache — page 1 checked recently ──
   if (cached && cached.allSongs.length > 0 && (now - cached.lastIncrCheck) < INCR_CHECK_MS) {
+    console.log('[share-playlist] cache hit, returning', cached.allSongs.length, 'songs')
     return cached.allSongs
   }
 
@@ -294,10 +297,12 @@ export const getKugouPlaylistFromShare = async (value) => {
       zlistParams = resolved.params
       htmlFallback = resolved.html
     }
+    console.log('[share-playlist] resolveZlistParams →', zlistParams ? 'params OK' : 'params MISSING', '| html:', htmlFallback.length, 'bytes')
   }
 
   if (!zlistParams) {
     // Can't use zlist API — try HTML scraping fallback
+    console.log('[share-playlist] no zlist params, falling back to HTML scraping')
     if (htmlFallback) {
       const items = parseSharePlaylistData(htmlFallback)
       if (items.length > 0) return normalizeShareSongs(items)
@@ -327,7 +332,9 @@ export const getKugouPlaylistFromShare = async (value) => {
         cached.zlistParams = zlistParams
         return cached.allSongs
       }
-    } catch {}
+    } catch (err) {
+    console.error('[share-playlist] Case 3 error:', err.message || err)
+  }
 
     // Page 1 fetch failed — return stale cache
     cached.lastIncrCheck = now
@@ -336,7 +343,9 @@ export const getKugouPlaylistFromShare = async (value) => {
 
   // ── Case 3: No cache or expired — full fetch ──
   try {
+    console.log('[share-playlist] Case 3: full fetch with params:', JSON.stringify(zlistParams))
     const allRaw = await fetchAllZlistPages(zlistParams)
+    console.log('[share-playlist] fetchAllZlistPages returned', allRaw.length, 'raw songs')
     if (allRaw.length > 0) {
       const normalized = normalizeZlistSongs(allRaw)
       const hashSet = new Set(normalized.map(s => s.hash))
@@ -351,7 +360,9 @@ export const getKugouPlaylistFromShare = async (value) => {
 
       return normalized
     }
-  } catch {}
+  } catch (err) {
+    console.error('[share-playlist] Case 3 error:', err.message || err)
+  }
 
   // Full fetch failed — try HTML scraping
   if (htmlFallback) {
