@@ -187,7 +187,7 @@ export default async (c) => {
         data = await getKugouPlaylistFromShare(id)
       }
 
-      if (data === undefined) {
+      if (data == null) {
         const method = METING_METHODS[type]
         let response
         try {
@@ -205,7 +205,7 @@ export default async (c) => {
     }
     cache.set(cacheKey, data, {
       ttl: isKugouSharePlaylist
-        ? 1000 * 30
+        ? 1000 * 60 * 30
         : (type === 'url' ? 1000 * 60 * 10 : 1000 * 60 * 60)
     })
   }
