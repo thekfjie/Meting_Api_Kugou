@@ -12,6 +12,7 @@ const KUGOU_SHARE_CODE_PATTERN = /^(?=.*[A-Za-z])[A-Za-z0-9]{8,}$/
 
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+const FETCH_TIMEOUT_MS = 15000
 const ZLIST_API_HOST = 'https://m3ws.kugou.com'
 const ZLIST_PAGE_SIZE = 200
 const ZLIST_MAX_PAGES = 20
