@@ -14,8 +14,9 @@ const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 const FETCH_TIMEOUT_MS = 15000
 const ZLIST_API_HOST = 'https://m3ws.kugou.com'
-const ZLIST_PAGE_SIZE = 200
-const ZLIST_MAX_PAGES = 20
+const ZLIST_PAGE_SIZE = 10
+const ZLIST_MAX_PAGES = 200
+const ZLIST_CONCURRENCY = 10
 
 // Smart cache: avoid full re-fetch every time
 // Page 1 = newest songs → refresh frequently
@@ -236,12 +237,30 @@ const fetchZlistPage = async (params, page) => {
 const fetchAllZlistPages = async (params) => {
   const allSongs = []
 
-  for (let page = 1; page <= ZLIST_MAX_PAGES; page++) {
-    const result = await fetchZlistPage(params, page)
-    if (!result || result.songs.length === 0) break
+  for (let batchStart = 1; batchStart <= ZLIST_MAX_PAGES; batchStart += ZLIST_CONCURRENCY) {
+    const pageNumbers = []
+    for (let i = 0; i < ZLIST_CONCURRENCY && (batchStart + i) <= ZLIST_MAX_PAGES; i++) {
+      pageNumbers.push(batchStart + i)
+    }
 
-    allSongs.push(...result.songs)
-    if (allSongs.length >= result.total) break
+    const results = await Promise.all(
+      pageNumbers.map(page => fetchZlistPage(params, page))
+    )
+
+    let gotShortPage = false
+    for (const result of results) {
+      if (!result || result.songs.length === 0) {
+        gotShortPage = true
+        break
+      }
+      allSongs.push(...result.songs)
+      if (result.songs.length < ZLIST_PAGE_SIZE) {
+        gotShortPage = true
+        break
+      }
+    }
+
+    if (gotShortPage) break
   }
 
   return allSongs
