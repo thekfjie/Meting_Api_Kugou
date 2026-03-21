@@ -10,7 +10,8 @@ const KUGOU_SHARE_HOSTS = new Set([
 ])
 const KUGOU_SHARE_CODE_PATTERN = /^(?=.*[A-Za-z])[A-Za-z0-9]{8,}$/
 
-const FETCH_TIMEOUT_MS = 15000
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 const ZLIST_API_HOST = 'https://m3ws.kugou.com'
 const ZLIST_PAGE_SIZE = 200
 const ZLIST_MAX_PAGES = 20
@@ -166,7 +167,7 @@ const fetchJson = async (url) => {
   }
 }
 
-const fetchRedirectUrl = async (url) => {
+const fetchRedirectUrl = async (url, ua = DESKTOP_UA) => {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
@@ -174,9 +175,7 @@ const fetchRedirectUrl = async (url) => {
     const response = await fetch(url, {
       redirect: 'follow',
       signal: controller.signal,
-      headers: {
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-      }
+      headers: { 'user-agent': ua }
     })
 
     return {
@@ -246,12 +245,21 @@ const fetchAllZlistPages = async (params) => {
 }
 
 const resolveZlistParams = async (normalizedInput) => {
-  const response = await fetchRedirectUrl(normalizedInput)
-  if (!response) return null
+  // Try desktop UA first (gets HTML with dataFromSmarty for fallback)
+  const desktopResponse = await fetchRedirectUrl(normalizedInput, DESKTOP_UA)
+  const desktopHtml = desktopResponse?.ok ? desktopResponse.text : ''
 
-  const params = extractZlistParams(response.url || normalizedInput)
-  const html = response.ok ? response.text : ''
-  return { params, html }
+  let params = desktopResponse ? extractZlistParams(desktopResponse.url || normalizedInput) : null
+
+  // Desktop redirect often lacks global_collection_id/sign — try mobile UA
+  if (!params) {
+    const mobileResponse = await fetchRedirectUrl(normalizedInput, MOBILE_UA)
+    if (mobileResponse) {
+      params = extractZlistParams(mobileResponse.url || normalizedInput)
+    }
+  }
+
+  return { params, html: desktopHtml }
 }
 
 export const canUseKugouSharePlaylist = (value) => {
