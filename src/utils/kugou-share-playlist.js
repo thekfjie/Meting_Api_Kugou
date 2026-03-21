@@ -116,17 +116,18 @@ const normalizeZlistSongs = (items) => {
     if (!hash || seen.has(hash)) continue
     seen.add(hash)
 
-    const fileName = String(item?.filename || item?.fileName || '').trim()
+    // zlist API uses "name" field with "artist - title" format
+    const rawName = String(item?.name || item?.filename || item?.fileName || '').trim()
     let songName = String(item?.songname || item?.song_name || '').trim()
     let artistName = String(item?.singername || item?.author_name || '').trim()
 
-    if (!songName && fileName) {
-      const parts = fileName.split(' - ')
+    if (!songName && rawName) {
+      const parts = rawName.split(' - ')
       if (parts.length >= 2) {
         artistName = artistName || parts[0].trim()
         songName = parts.slice(1).join(' - ').trim()
       } else {
-        songName = fileName
+        songName = rawName
       }
     }
 
@@ -249,7 +250,8 @@ const resolveZlistParams = async (normalizedInput) => {
   if (!response) return null
 
   const params = extractZlistParams(response.url || normalizedInput)
-  return params ? { params, html: response.ok ? response.text : '' } : null
+  const html = response.ok ? response.text : ''
+  return { params, html }
 }
 
 export const canUseKugouSharePlaylist = (value) => {
@@ -287,10 +289,6 @@ export const getKugouPlaylistFromShare = async (value) => {
 
   if (!zlistParams) {
     // Can't use zlist API — try HTML scraping fallback
-    if (!htmlFallback) {
-      const resolved = await resolveZlistParams(normalizedInput)
-      htmlFallback = resolved?.html || ''
-    }
     if (htmlFallback) {
       const items = parseSharePlaylistData(htmlFallback)
       if (items.length > 0) return normalizeShareSongs(items)
@@ -347,10 +345,6 @@ export const getKugouPlaylistFromShare = async (value) => {
   } catch {}
 
   // Full fetch failed — try HTML scraping
-  if (!htmlFallback) {
-    const resolved = await resolveZlistParams(normalizedInput)
-    htmlFallback = resolved?.html || ''
-  }
   if (htmlFallback) {
     const items = parseSharePlaylistData(htmlFallback)
     if (items.length > 0) return normalizeShareSongs(items)
