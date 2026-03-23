@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { readCookieFile } from '../utils/cookie.js'
+import { inspectCookieSource, readCookieFile } from '../utils/cookie.js'
 import kugouMonitorService from './kugou-monitor.js'
 import {
   clearCookiePool,
@@ -103,6 +103,7 @@ const getPm2Status = async () => {
 
 const summarizePool = async (pool) => {
   const cookie = await readCookieFile('kugou', pool)
+  const sourceInfo = await inspectCookieSource('kugou', pool)
   const parsed = parseSimpleCookie(cookie)
   return {
     pool,
@@ -111,7 +112,11 @@ const summarizePool = async (pool) => {
     userId: parsed.KugooID || '',
     dfid: maskText(parsed.dfid || parsed.kg_dfid),
     mid: maskText(parsed.mid || parsed.kg_mid),
-    vipType: parsed.vip_type || ''
+    vipType: parsed.vip_type || '',
+    source: sourceInfo.source,
+    activeKey: sourceInfo.activeKey,
+    filePath: sourceInfo.filePath,
+    fallbackOrder: sourceInfo.fallbackOrder
   }
 }
 
@@ -254,6 +259,7 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
     .qr{max-width:220px;border-radius:12px;border:1px solid var(--line);background:#fff;padding:10px}.split{display:grid;grid-template-columns:1.3fr .7fr;gap:16px}.list{margin:0;padding-left:18px}
     .guide{padding-left:18px;margin:0}.guide li{margin:6px 0}.help{margin:0;padding-left:18px}.help li{margin:6px 0}.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--code);font-size:12px;color:var(--muted)}
     .hint{padding:12px 14px;border-radius:12px;background:var(--code);color:var(--muted);font-size:13px}.warnbox{padding:12px 14px;border-radius:12px;background:var(--warn-soft);color:var(--warn);font-size:13px}
+    .stack{display:grid;gap:10px}.sourcebox{padding:12px 14px;border-radius:12px;background:var(--code);color:var(--muted);font-size:13px}
     @media (max-width:880px){.split{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -293,20 +299,23 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
           ${pools.map(item => `<tr><td>${item.pool}</td><td>${item.configured ? '是' : '否'}</td><td>${escapeHtml(item.userId || '-')}</td><td class="mono">${escapeHtml(item.token || '-')}</td><td>${escapeHtml(item.vipType || '-')}</td></tr>`).join('')}
         </tbody></table>
         <div class="muted">保留原来的 premium/general 双池逻辑。管理页登录成功后，可把新的上游登录态写回任意池文件。</div>
+        <div class="stack" style="margin-top:12px">
+          ${pools.map(item => `<div class="sourcebox"><strong>${escapeHtml(item.pool)}</strong><br>当前来源：${escapeHtml(item.source)}${item.activeKey ? ` (${escapeHtml(item.activeKey)})` : ''}<br>文件路径：${escapeHtml(item.filePath || '-')}<br>优先级：${escapeHtml((item.fallbackOrder || []).join(' -> ') || '-')}</div>`).join('')}
+        </div>
         <h3>池文件操作</h3>
         <div class="warnbox">清空会直接删除对应池的 CK 文件；迁移会把源池移动到目标池；复制会保留源池。</div>
         <div class="actions">
-          <form method="post" action="${buildManageRoot(basePath)}/pool/clear"><input type="hidden" name="pool" value="premium"><button class="danger smallbtn" type="submit">清空 premium</button></form>
-          <form method="post" action="${buildManageRoot(basePath)}/pool/clear"><input type="hidden" name="pool" value="general"><button class="danger smallbtn" type="submit">清空 general</button></form>
+          <form method="post" action="${buildManageRoot(basePath)}/pool/clear" onsubmit="return confirm('确认清空 premium 池？这会删除对应 CK 文件。')"><input type="hidden" name="pool" value="premium"><button class="danger smallbtn" type="submit">清空 premium</button></form>
+          <form method="post" action="${buildManageRoot(basePath)}/pool/clear" onsubmit="return confirm('确认清空 general 池？这会删除对应 CK 文件。')"><input type="hidden" name="pool" value="general"><button class="danger smallbtn" type="submit">清空 general</button></form>
         </div>
-        <form method="post" action="${buildManageRoot(basePath)}/pool/copy" style="margin-top:12px">
+        <form method="post" action="${buildManageRoot(basePath)}/pool/copy" style="margin-top:12px" onsubmit="return confirm('确认复制池？源池会保留，目标池将被覆盖。')">
           <div class="actions">
             <select name="fromPool"><option value="premium">premium</option><option value="general">general</option></select>
             <select name="toPool"><option value="general">general</option><option value="premium">premium</option></select>
             <button class="smallbtn" type="submit">复制到目标池</button>
           </div>
         </form>
-        <form method="post" action="${buildManageRoot(basePath)}/pool/move" style="margin-top:10px">
+        <form method="post" action="${buildManageRoot(basePath)}/pool/move" style="margin-top:10px" onsubmit="return confirm('确认迁移池？源池会被移动到目标池，源池原文件将消失。')">
           <div class="actions">
             <select name="fromPool"><option value="premium">premium</option><option value="general">general</option></select>
             <select name="toPool"><option value="general">general</option><option value="premium">premium</option></select>
@@ -473,8 +482,12 @@ export default async (c) => {
   if (c.req.method === 'POST' && c.req.path.endsWith('/pool/clear')) {
     const form = await getForm(c)
     const pool = form.pool === 'premium' ? 'premium' : 'general'
-    await clearCookiePool(pool)
-    setFlash(c, `${pool} 池已清空（删除对应 CK 文件）`)
+    try {
+      await clearCookiePool(pool)
+      setFlash(c, `${pool} 池已清空（删除对应 CK 文件）`)
+    } catch (error) {
+      setFlash(c, `清空 ${pool} 池失败：${error.message || '未知错误'}`)
+    }
     return redirect(c, buildManageRoot(basePath))
   }
 
@@ -486,8 +499,12 @@ export default async (c) => {
       setFlash(c, '复制失败：源池和目标池不能相同')
       return redirect(c, buildManageRoot(basePath))
     }
-    await copyCookiePool(fromPool, toPool)
-    setFlash(c, `已复制 ${fromPool} -> ${toPool}`)
+    try {
+      await copyCookiePool(fromPool, toPool)
+      setFlash(c, `已复制 ${fromPool} -> ${toPool}`)
+    } catch (error) {
+      setFlash(c, `复制失败：${error.message || '未知错误'}`)
+    }
     return redirect(c, buildManageRoot(basePath))
   }
 
@@ -499,8 +516,12 @@ export default async (c) => {
       setFlash(c, '迁移失败：源池和目标池不能相同')
       return redirect(c, buildManageRoot(basePath))
     }
-    await moveCookiePool(fromPool, toPool)
-    setFlash(c, `已迁移 ${fromPool} -> ${toPool}`)
+    try {
+      await moveCookiePool(fromPool, toPool)
+      setFlash(c, `已迁移 ${fromPool} -> ${toPool}`)
+    } catch (error) {
+      setFlash(c, `迁移失败：${error.message || '未知错误'}`)
+    }
     return redirect(c, buildManageRoot(basePath))
   }
 

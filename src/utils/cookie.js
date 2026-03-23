@@ -109,6 +109,44 @@ export async function readCookieFile (server, pool = 'default') {
   return ''
 }
 
+export async function inspectCookieSource (server, pool = 'default') {
+  const { envKeys, fileNames } = getCookieSources(server, pool)
+
+  for (const envKey of envKeys) {
+    const envCookie = process.env[envKey]
+    if (envCookie && envCookie.trim()) {
+      return {
+        source: 'env',
+        activeKey: envKey,
+        filePath: '',
+        fallbackOrder: [...envKeys, ...fileNames.map(name => `cookie/${name}`)]
+      }
+    }
+  }
+
+  for (const fileName of fileNames) {
+    try {
+      const cookiePath = resolve(process.cwd(), 'cookie', fileName)
+      const cookie = await readFile(cookiePath, 'utf-8')
+      if (cookie.trim()) {
+        return {
+          source: 'file',
+          activeKey: fileName,
+          filePath: cookiePath,
+          fallbackOrder: [...envKeys, ...fileNames.map(name => `cookie/${name}`)]
+        }
+      }
+    } catch (error) {}
+  }
+
+  return {
+    source: 'none',
+    activeKey: '',
+    filePath: resolve(process.cwd(), 'cookie', fileNames[0] || server),
+    fallbackOrder: [...envKeys, ...fileNames.map(name => `cookie/${name}`)]
+  }
+}
+
 export function clearCookieCache () {
   cookieCache.clear()
 }
