@@ -10,7 +10,13 @@ module.exports = {
       autorestart: true,
       watch: false,
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        ALL_PROXY: '',
+        http_proxy: '',
+        https_proxy: '',
+        all_proxy: ''
       }
     },
     {
@@ -21,7 +27,13 @@ module.exports = {
       autorestart: true,
       watch: false,
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        ALL_PROXY: '',
+        http_proxy: '',
+        https_proxy: '',
+        all_proxy: ''
       }
     }
   ]
