@@ -50,12 +50,13 @@ yarn start
 
 ### PM2 部署
 
-如果你希望把 `Meting-API` 和 `KuGouMusicApi` 一起交给 PM2 托管,建议把两个项目放在同级目录:
+如果你希望把 `Meting-API` 和内置的 `KuGouMusicApi` 一起交给 PM2 托管,当前仓库已经内置 `KuGouMusicApi/` 子目录:
 
 ```text
 E:/my_service/
-  ├── Meting-API/
-  └── KuGouMusicApi/
+  └── Meting-API/
+      ├── KuGouMusicApi/
+      └── ecosystem.config.cjs
 ```
 
 然后在 `Meting-API` 根目录执行:
@@ -68,7 +69,7 @@ pm2 save
 该配置会同时启动:
 
 - `meting-api`: 当前服务
-- `kugou-upstream`: 指向同级目录下的 `KuGouMusicApi`
+- `kugou-upstream`: 指向仓库内置的 `KuGouMusicApi`
 
 如果服务器上之前只托管了 `meting-api`, 拉取更新后需要额外执行一次:
 
@@ -77,10 +78,10 @@ pm2 start ecosystem.config.cjs --only kugou-upstream
 pm2 save
 ```
 
-如果你已经用反向代理把 `Meting-API` 暴露为例如 `https://api.kfjie.me/api`, 后台页会自动复用同一个前缀:
+如果你已经用反向代理把接口暴露为 `https://api.kfjie.me/music`, 推荐把管理页暴露为以下两条路径:
 
-- 未登录访问 `https://api.kfjie.me/api/admin` 时,只显示基础监控信息
-- 登录后访问同一路径,就会进入完整后台页
+- 未登录监控页: `https://api.kfjie.me/music/manage/monitor`
+- 登录入口: `https://api.kfjie.me/music/manage/login`
 
 两个服务各自读取自己目录内的 `.env` 文件,因此修改环境变量后需要执行:
 

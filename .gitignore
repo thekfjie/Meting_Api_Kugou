@@ -3,3 +3,10 @@ node_modules/
 cookie/
 *.log
 test-v5-url.js
+admin-cookie.txt
+KuGouMusicApi/.env
+KuGouMusicApi/node_modules/
+KuGouMusicApi/kugou-service.log
+KuGouMusicApi/kugou-service-default.log
+KuGouMusicApi/upstream-cookies.txt
+KuGouMusicApi/upstream-cookies-default.txt

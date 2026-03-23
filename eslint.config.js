@@ -12,6 +12,9 @@ const compat = new FlatCompat({
 })
 
 export default [
+  {
+    ignores: ['KuGouMusicApi/**']
+  },
   ...compat.config({
     extends: ['standard'],
     env: {

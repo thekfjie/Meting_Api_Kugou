@@ -74,7 +74,10 @@ const consumeFlash = (c) => {
 
 const runPm2 = async (args) => {
   try {
-    const result = await execFileAsync('cmd.exe', ['/c', pm2Bin, ...args], { windowsHide: true })
+    const command = process.platform === 'win32'
+      ? { file: 'cmd.exe', args: ['/c', pm2Bin, ...args], options: { windowsHide: true } }
+      : { file: 'pm2', args, options: {} }
+    const result = await execFileAsync(command.file, command.args, command.options)
     return { ok: true, stdout: result.stdout || '', stderr: result.stderr || '' }
   } catch (error) {
     return {
@@ -172,7 +175,10 @@ const describeProfile = (profile, pools) => {
   }
 }
 
-const renderLoginPage = (message = '') => `<!doctype html>
+const buildManageRoot = (basePath) => `${basePath}/manage`
+const buildManageLogin = (basePath) => `${buildManageRoot(basePath)}/login`
+
+const renderLoginPage = ({ message = '', basePath = '/music' }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -189,7 +195,7 @@ const renderLoginPage = (message = '') => `<!doctype html>
   </style>
 </head>
 <body>
-  <form class="card" method="post" action="/admin/login">
+  <form class="card" method="post" action="${buildManageLogin(basePath)}">
     <h1>Admin</h1>
     <p>输入后台密码进入管理页。</p>
     ${message ? `<div class="msg">${escapeHtml(message)}</div>` : ''}
@@ -232,18 +238,18 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
         <h1 class="title">Meting Admin</h1>
         <div class="sub">统一查看 Kugou 双池、上游登录状态与 PM2 进程。</div>
       </div>
-      <form method="post" action="${basePath}/admin/logout"><button class="ghost btn" type="submit">退出登录</button></form>
+      <form method="post" action="${buildManageRoot(basePath)}/logout"><button class="ghost btn" type="submit">退出登录</button></form>
     </div>
     ${flash ? `<div class="flash">${escapeHtml(flash)}</div>` : ''}
     <div class="grid">
       <section class="card">
         <h2>运行状态</h2>
         <table><thead><tr><th>进程</th><th>状态</th><th>内存</th><th>操作</th></tr></thead><tbody>
-          ${pm2.map(item => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.pm2_env?.status || '-')}</td><td>${Math.round((item.monit?.memory || 0) / 1024 / 1024)} MB</td><td><form method="post" action="${basePath}/admin/pm2"><input type="hidden" name="name" value="${escapeHtml(item.name)}"><input type="hidden" name="action" value="restart"><button class="smallbtn" type="submit">重启</button></form></td></tr>`).join('')}
+          ${pm2.map(item => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.pm2_env?.status || '-')}</td><td>${Math.round((item.monit?.memory || 0) / 1024 / 1024)} MB</td><td><form method="post" action="${buildManageRoot(basePath)}/pm2"><input type="hidden" name="name" value="${escapeHtml(item.name)}"><input type="hidden" name="action" value="restart"><button class="smallbtn" type="submit">重启</button></form></td></tr>`).join('')}
         </tbody></table>
         <div class="actions">
-          <form method="post" action="${basePath}/admin/pm2"><input type="hidden" name="name" value="meting-api"><input type="hidden" name="action" value="restart-update"><button class="smallbtn" type="submit">重载 Meting 环境</button></form>
-          <form method="post" action="${basePath}/admin/pm2"><input type="hidden" name="name" value="kugou-upstream"><input type="hidden" name="action" value="restart-update"><button class="smallbtn" type="submit">重载 Upstream 环境</button></form>
+          <form method="post" action="${buildManageRoot(basePath)}/pm2"><input type="hidden" name="name" value="meting-api"><input type="hidden" name="action" value="restart-update"><button class="smallbtn" type="submit">重载 Meting 环境</button></form>
+          <form method="post" action="${buildManageRoot(basePath)}/pm2"><input type="hidden" name="name" value="kugou-upstream"><input type="hidden" name="action" value="restart-update"><button class="smallbtn" type="submit">重载 Upstream 环境</button></form>
         </div>
       </section>
       <section class="card">
@@ -263,20 +269,20 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
             <li>登录成功后，页面可直接把会话写入 <code>premium</code> 或 <code>general</code> 池</li>
           </ul>
           <div class="actions">
-            <form method="post" action="${basePath}/admin/kugou/qr/start"><button class="btn" type="submit">生成酷狗二维码</button></form>
-            <form method="post" action="${basePath}/admin/kugou/qr/check"><button class="ghost btn" type="submit">检查扫码状态</button></form>
-            <form method="post" action="${basePath}/admin/kugou/refresh"><button class="smallbtn" type="submit">刷新 premium 登录态</button></form>
-            <form method="post" action="${basePath}/admin/kugou/refresh"><input type="hidden" name="pool" value="general"><button class="smallbtn" type="submit">刷新 general 登录态</button></form>
+            <form method="post" action="${buildManageRoot(basePath)}/kugou/qr/start"><button class="btn" type="submit">生成酷狗二维码</button></form>
+            <form method="post" action="${buildManageRoot(basePath)}/kugou/qr/check"><button class="ghost btn" type="submit">检查扫码状态</button></form>
+            <form method="post" action="${buildManageRoot(basePath)}/kugou/refresh"><button class="smallbtn" type="submit">刷新 premium 登录态</button></form>
+            <form method="post" action="${buildManageRoot(basePath)}/kugou/refresh"><input type="hidden" name="pool" value="general"><button class="smallbtn" type="submit">刷新 general 登录态</button></form>
           </div>
           ${profileSummary ? `<h3>当前账号概览</h3><table><tbody><tr><th>User ID</th><td>${escapeHtml(profileSummary.userId)}</td></tr><tr><th>昵称</th><td>${escapeHtml(profileSummary.nickname)}</td></tr><tr><th>当前池</th><td>${escapeHtml(profileSummary.poolOwner)}</td></tr><tr><th>VIP 类型</th><td>${escapeHtml(profileSummary.vipType)}</td></tr><tr><th>VIP 等级</th><td>${escapeHtml(profileSummary.vipLevel)}</td></tr><tr><th>到期时间</th><td>${escapeHtml(profileSummary.expiresAt)}</td></tr></tbody></table>` : '<div class="muted">尚未获取用户资料。</div>'}
           ${profile ? `<details><summary class="muted">查看原始账号数据</summary><pre class="mono">${escapeHtml(JSON.stringify(profile, null, 2))}</pre></details>` : ''}
           <h3>短信验证码登录</h3>
-          <form method="post" action="${basePath}/admin/kugou/captcha/send">
+          <form method="post" action="${buildManageRoot(basePath)}/kugou/captcha/send">
             <label>手机号</label>
             <input name="mobile" placeholder="输入手机号" value="${escapeHtml(smsState?.mobile || '')}">
             <button class="smallbtn" type="submit">发送验证码</button>
           </form>
-          <form method="post" action="${basePath}/admin/kugou/captcha/login" style="margin-top:10px">
+          <form method="post" action="${buildManageRoot(basePath)}/kugou/captcha/login" style="margin-top:10px">
             <label>验证码</label>
             <input name="code" placeholder="输入短信验证码">
             <label>写入池</label>
@@ -285,7 +291,7 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
           </form>
         </div>
         <div>
-          ${loginState ? `<h3>二维码登录</h3><img class="qr" src="${escapeHtml(loginState.base64)}" alt="qr"><p class="muted">扫码后点“检查扫码状态”。状态 key：${escapeHtml(loginState.key)}</p><form method="post" action="${basePath}/admin/kugou/qr/apply"><label>写入池</label><select name="pool"><option value="premium">premium</option><option value="general">general</option></select><button class="btn" type="submit" style="margin-top:10px">写入登录态</button></form>` : '<div class="muted">还没有生成二维码。</div>'}
+          ${loginState ? `<h3>二维码登录</h3><img class="qr" src="${escapeHtml(loginState.base64)}" alt="qr"><p class="muted">扫码后点“检查扫码状态”。状态 key：${escapeHtml(loginState.key)}</p><form method="post" action="${buildManageRoot(basePath)}/kugou/qr/apply"><label>写入池</label><select name="pool"><option value="premium">premium</option><option value="general">general</option></select><button class="btn" type="submit" style="margin-top:10px">写入登录态</button></form>` : '<div class="muted">还没有生成二维码。</div>'}
         </div>
       </section>
       <section class="card" style="grid-column:1/-1">
@@ -308,7 +314,7 @@ const getProfileSummary = async () => {
 
 const getUpstreamPlatform = async () => {
   try {
-    const envPath = resolve(process.cwd(), '../KuGouMusicApi/.env')
+    const envPath = resolve(process.cwd(), 'KuGouMusicApi/.env')
     const content = await readFile(envPath, 'utf8')
     const line = content.split(/\r?\n/).find(item => item.startsWith('platform=')) || ''
     return line.slice('platform='.length).trim() || 'default'
@@ -317,18 +323,20 @@ const getUpstreamPlatform = async () => {
   }
 }
 
-const ensureAuth = (c) => {
+const ensureAuth = (c, basePath) => {
   if (!hasAdminPassword()) {
     return c.html('<h1>ADMIN_PASSWORD 未配置</h1>', 500)
   }
   if (!requireAdminAuth(c)) {
-    return redirect(c, '/admin/login')
+    return redirect(c, buildManageLogin(basePath))
   }
   return null
 }
 
 const getBasePath = (c) => {
-  const prefix = c.req.path.replace(/\/admin(?:\/login)?(?:\/.*)?$/, '')
+  if (c.req.path.startsWith('/music/manage')) return '/music'
+  if (c.req.path.startsWith('/api/manage')) return '/api'
+  const prefix = c.req.path.replace(/\/(?:music|api)\/manage(?:\/login|\/monitor)?(?:\/.*)?$/, '')
   return prefix === '/' ? '' : prefix
 }
 
@@ -347,7 +355,7 @@ const renderPublicInfoPage = ({ basePath, monitor }) => `<!doctype html>
 </head>
 <body>
   <div class="wrap">
-    <div class="top"><div><h1>Meting Monitor</h1><p>未登录时只展示基础状态。</p></div><a class="btn" href="${basePath}/admin/login">后台登录</a></div>
+    <div class="top"><div><h1>Meting Monitor</h1><p>未登录时只展示基础状态。</p></div><a class="btn" href="${buildManageLogin(basePath)}">后台登录</a></div>
     <div class="card"><pre>${escapeHtml(JSON.stringify(monitor, null, 2))}</pre></div>
   </div>
 </body>
@@ -357,30 +365,34 @@ export default async (c) => {
   const basePath = getBasePath(c)
 
   if (c.req.method === 'GET' && c.req.path.endsWith('/login')) {
-    return c.html(renderLoginPage(consumeFlash(c)))
+    return c.html(renderLoginPage({ message: consumeFlash(c), basePath }))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/login')) {
     const form = await getForm(c)
     if (!verifyAdminPassword(form.password || '')) {
       setFlash(c, '密码错误')
-      return redirect(c, `${basePath}/admin/login`)
+      return redirect(c, buildManageLogin(basePath))
     }
     setSessionCookie(c, createAdminSession())
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/logout')) {
     clearSessionCookie(c)
-    return redirect(c, `${basePath}/admin/login`)
+    return redirect(c, buildManageLogin(basePath))
   }
 
-  if (c.req.method === 'GET' && c.req.path.endsWith('/admin') && !requireAdminAuth(c)) {
+  if (c.req.method === 'GET' && c.req.path.endsWith('/manage/login') && requireAdminAuth(c)) {
+    return redirect(c, buildManageRoot(basePath))
+  }
+
+  if (c.req.method === 'GET' && (c.req.path.endsWith('/manage') || c.req.path.endsWith('/manage/monitor')) && !requireAdminAuth(c)) {
     const monitor = await readMonitorData()
     return c.html(renderPublicInfoPage({ basePath, monitor }))
   }
 
-  const denied = ensureAuth(c)
+  const denied = ensureAuth(c, basePath)
   if (denied) return denied
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/pm2')) {
@@ -390,26 +402,26 @@ export default async (c) => {
       : ['restart', form.name]
     const result = await runPm2(args)
     setFlash(c, result.ok ? `已执行 PM2 操作: ${form.name}` : `PM2 操作失败: ${result.stderr || result.stdout}`)
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/qr/start')) {
     const login = await fetchKugouQrLogin()
     if (!login) {
       setFlash(c, '生成二维码失败')
-      return redirect(c, `${basePath}/admin`)
+      return redirect(c, buildManageRoot(basePath))
     }
     const device = await registerKugouDevice()
     setLoginState({ ...login, cookieMap: device?.cookieMap || {}, token: '', userid: '' })
     setFlash(c, '二维码已生成')
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/qr/check')) {
     const state = getLoginState()
     if (!state) {
       setFlash(c, '请先生成二维码')
-      return redirect(c, `${basePath}/admin`)
+      return redirect(c, buildManageRoot(basePath))
     }
     const result = await checkKugouQrLogin(state.key)
     setLoginState({
@@ -425,7 +437,7 @@ export default async (c) => {
     })
     const map = { 0: '二维码已过期', 1: '等待扫码', 2: '已扫码待确认', 4: '已登录成功，可写入池' }
     setFlash(c, map[result.status] || `当前状态: ${result.status}`)
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/qr/apply')) {
@@ -433,7 +445,7 @@ export default async (c) => {
     const form = await getForm(c)
     if (!state || Number(state.status) !== 4) {
       setFlash(c, '登录尚未完成，不能写入池')
-      return redirect(c, `${basePath}/admin`)
+      return redirect(c, buildManageRoot(basePath))
     }
 
     const existingCookie = await readCookieFile('kugou', form.pool || 'premium')
@@ -443,7 +455,7 @@ export default async (c) => {
     })
     await writeCookiePool(form.pool || 'premium', mergedCookie)
     setFlash(c, `已写入 ${form.pool || 'premium'} 池`)
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/refresh')) {
@@ -452,7 +464,7 @@ export default async (c) => {
     const currentCookie = await readCookieFile('kugou', pool)
     if (!currentCookie) {
       setFlash(c, `${pool} 池没有可刷新的 Cookie`)
-      return redirect(c, `${basePath}/admin`)
+      return redirect(c, buildManageRoot(basePath))
     }
     const result = await refreshKugouLogin(currentCookie)
     const mergedCookie = normalizeKugouCookieForMeting({
@@ -461,14 +473,14 @@ export default async (c) => {
     })
     await writeCookiePool(pool, mergedCookie)
     setFlash(c, `${pool} 池登录态已刷新`)
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/captcha/send')) {
     const form = await getForm(c)
     if (!form.mobile) {
       setFlash(c, '请先输入手机号')
-      return redirect(c, `${basePath}/admin`)
+      return redirect(c, buildManageRoot(basePath))
     }
     const device = await registerKugouDevice()
     const result = await sendKugouCaptcha({
@@ -480,7 +492,7 @@ export default async (c) => {
       cookieMap: result.cookieMap || device.cookieMap || {}
     })
     setFlash(c, `验证码发送结果: ${JSON.stringify(result.body || {})}`)
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/captcha/login')) {
@@ -488,7 +500,7 @@ export default async (c) => {
     const state = getSmsState()
     if (!state?.mobile || !form.code) {
       setFlash(c, '请先发送验证码并填写验证码')
-      return redirect(c, `${basePath}/admin`)
+      return redirect(c, buildManageRoot(basePath))
     }
     const result = await loginKugouCellphone({
       mobile: state.mobile,
@@ -502,7 +514,7 @@ export default async (c) => {
     })
     await writeCookiePool(form.pool || 'premium', mergedCookie)
     setFlash(c, `验证码登录已写入 ${form.pool || 'premium'} 池`)
-    return redirect(c, `${basePath}/admin`)
+    return redirect(c, buildManageRoot(basePath))
   }
 
   const flash = consumeFlash(c)

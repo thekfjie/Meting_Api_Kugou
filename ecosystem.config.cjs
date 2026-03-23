@@ -4,7 +4,7 @@ module.exports = {
   apps: [
     {
       name: 'kugou-upstream',
-      cwd: path.resolve(__dirname, '../KuGouMusicApi'),
+      cwd: path.resolve(__dirname, './KuGouMusicApi'),
       script: 'app.js',
       interpreter: 'node',
       autorestart: true,
