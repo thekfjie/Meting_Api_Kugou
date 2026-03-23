@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, copyFile, rename, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import config from '../config.js'
 import { clearCookieCache } from './cookie.js'
@@ -134,5 +134,32 @@ export const writeCookiePool = async (pool, value) => {
   await mkdir(cookieDir, { recursive: true })
   const target = pool === 'premium' ? 'kugou-premium' : 'kugou-general'
   await writeFile(resolve(cookieDir, target), String(value || '').trim(), 'utf8')
+  clearCookieCache()
+}
+
+const getPoolFilePath = (pool) => {
+  const target = pool === 'premium' ? 'kugou-premium' : 'kugou-general'
+  return resolve(process.cwd(), 'cookie', target)
+}
+
+export const clearCookiePool = async (pool) => {
+  const filePath = getPoolFilePath(pool)
+  try {
+    await unlink(filePath)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  clearCookieCache()
+}
+
+export const copyCookiePool = async (fromPool, toPool) => {
+  await mkdir(resolve(process.cwd(), 'cookie'), { recursive: true })
+  await copyFile(getPoolFilePath(fromPool), getPoolFilePath(toPool))
+  clearCookieCache()
+}
+
+export const moveCookiePool = async (fromPool, toPool) => {
+  await mkdir(resolve(process.cwd(), 'cookie'), { recursive: true })
+  await rename(getPoolFilePath(fromPool), getPoolFilePath(toPool))
   clearCookieCache()
 }
