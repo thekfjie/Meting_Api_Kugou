@@ -172,6 +172,9 @@ docker run -d \
 |--------|------|--------|
 | `HTTP_PREFIX` | HTTP 路由前缀 | `` (空) |
 | `HTTP_PORT` | HTTP 服务监听端口 | `80` |
+| `ADMIN_PASSWORD` | 后台管理页登录密码 | `` (空,禁用后台) |
+| `ADMIN_SESSION_SECRET` | 后台会话签名密钥 | `METING_TOKEN` |
+| `ADMIN_SESSION_TTL_MS` | 后台登录会话有效期 | `43200000` |
 | `HTTPS_ENABLED` | 是否启用 HTTPS 服务 | `false` |
 | `HTTPS_PORT` | HTTPS 服务监听端口 | `443` |
 | `SSL_KEY_PATH` | HTTPS 私钥文件路径 | - |
@@ -353,12 +356,13 @@ METING_COOKIE_ALLOW_HOSTS=example.com,music.example.com
 
 当配置 `METING_KUGOU_UPSTREAM_URL` 后,`server=kugou` 的以下能力会优先走上游服务:
 
-- `search`
 - `song`
 - `playlist`
 - `lrc`
 - `url`
 - `pic`
+
+当前默认保留 `search` 走原有 Meting 搜索链路,因为公开搜索接口波动更大,原链路在大多数场景下更稳。
 
 外层仍保持 Meting 输出格式:
 

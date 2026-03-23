@@ -109,6 +109,10 @@ export async function readCookieFile (server, pool = 'default') {
   return ''
 }
 
+export function clearCookieCache () {
+  cookieCache.clear()
+}
+
 /**
  * 验证 referrer 是否在允许的主机列表中
  * @param {string} referrer - 请求的 referrer

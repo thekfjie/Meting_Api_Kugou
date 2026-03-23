@@ -17,6 +17,11 @@ export default {
     prefix: process.env.HTTP_PREFIX || '',
     port: toNumber(process.env.HTTP_PORT, 80)
   },
+  admin: {
+    password: process.env.ADMIN_PASSWORD || '',
+    sessionSecret: process.env.ADMIN_SESSION_SECRET || process.env.METING_TOKEN || 'token',
+    sessionTtlMs: toNumber(process.env.ADMIN_SESSION_TTL_MS, 12 * 60 * 60 * 1000)
+  },
   https: {
     enabled: toBoolean(process.env.HTTPS_ENABLED),
     port: toNumber(process.env.HTTPS_PORT, 443),

@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import { requestLogger, logger } from './middleware/logger.js'
 import errors from './middleware/errors.js'
 import apiService from './service/api.js'
+import adminService from './service/admin.js'
 import demoService from './service/demo.js'
 import kugouMonitorService from './service/kugou-monitor.js'
 import config from './config.js'
@@ -17,6 +18,15 @@ const app = new Hono()
 
 app.get(`${config.http.prefix}/api`, apiService)
 app.get(`${config.http.prefix}/music`, apiService)
+app.get(`${config.http.prefix}/admin`, adminService)
+app.get(`${config.http.prefix}/admin/login`, adminService)
+app.post(`${config.http.prefix}/admin/login`, adminService)
+app.post(`${config.http.prefix}/admin/logout`, adminService)
+app.post(`${config.http.prefix}/admin/pm2`, adminService)
+app.post(`${config.http.prefix}/admin/kugou/qr/start`, adminService)
+app.post(`${config.http.prefix}/admin/kugou/qr/check`, adminService)
+app.post(`${config.http.prefix}/admin/kugou/qr/apply`, adminService)
+app.post(`${config.http.prefix}/admin/kugou/refresh`, adminService)
 app.get(`${config.http.prefix}/demo`, demoService)
 app.get(`${config.http.prefix}/api/monitor/kugou`, kugouMonitorService)
 app.get(`${config.http.prefix}/monitor/kugou`, kugouMonitorService)

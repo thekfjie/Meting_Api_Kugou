@@ -99,25 +99,6 @@ const requestUpstream = async (path, { query = {}, cookie = '' } = {}) => {
   }
 }
 
-const requestJson = async (url) => {
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json, text/plain, */*'
-      },
-      signal: AbortSignal.timeout(config.meting.kugou.upstream.timeoutMs)
-    })
-
-    if (!response.ok) return null
-    const text = normalizeText(await response.text())
-    if (!text) return null
-    return JSON.parse(text)
-  } catch (error) {
-    return null
-  }
-}
-
 const buildAuthCookie = ({ cookie = '', dfid = '' } = {}) => {
   const parsed = parseKugouCookie(cookie)
   const parts = []
@@ -180,24 +161,6 @@ const mapSongFromPlaylist = (item) => {
   const author = pickAuthor(authorNames, item?.remark)
   const title = splitName(item?.name, authorNames[0] || item?.remark) || normalizeText(item?.name) || hash
   const albumAudioId = normalizeText(item?.mixsongid || item?.add_mixsongid || item?.album_audio_id)
-
-  return {
-    hash,
-    title,
-    author,
-    url_id: buildCompositeId(hash, albumAudioId),
-    pic_id: hash,
-    lyric_id: hash
-  }
-}
-
-const mapSongFromSearch = (item) => {
-  const hash = extractKugouHashFromResourceId(item?.hash || item?.FileHash)
-  if (!hash) return null
-
-  const author = pickAuthor([], item?.singername || item?.SingerName)
-  const title = splitName(item?.filename || item?.FileName, author) || normalizeText(item?.songname || item?.SongName) || hash
-  const albumAudioId = normalizeText(item?.album_audio_id || item?.MixSongID)
 
   return {
     hash,
@@ -339,28 +302,6 @@ const getUpstreamPlaylist = async ({ id }) => {
     .filter(Boolean)
 }
 
-const getUpstreamSearch = async ({ id }) => {
-  const keyword = normalizeText(id)
-  if (!keyword) return null
-
-  const url = new URL('https://mobiles.kugou.com/api/v3/search/song')
-  url.searchParams.set('format', 'json')
-  url.searchParams.set('keyword', keyword)
-  url.searchParams.set('page', '1')
-  url.searchParams.set('pagesize', '30')
-  url.searchParams.set('showtype', '1')
-
-  const response = await requestJson(url.toString())
-
-  const items = Array.isArray(response?.data?.info)
-    ? response.data.info
-    : (Array.isArray(response?.data?.lists) ? response.data.lists : [])
-
-  return items
-    .map(mapSongFromSearch)
-    .filter(Boolean)
-}
-
 export const hasKugouUpstream = () => Boolean(getBaseUrl())
 
 export const extractKugouHashFromResourceId = (value) => {
@@ -382,7 +323,6 @@ export const buildKugouCompositeId = (hash, albumAudioId = '') => {
 export const getKugouUpstreamData = async ({ type, id, cookie = '' }) => {
   if (!hasKugouUpstream()) return null
 
-  if (type === 'search') return getUpstreamSearch({ id })
   if (type === 'song') return getUpstreamSong({ id, cookie })
   if (type === 'playlist') return getUpstreamPlaylist({ id })
   if (type === 'lrc') return getUpstreamLyric({ id })
