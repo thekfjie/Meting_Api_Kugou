@@ -1,3 +1,5 @@
 node_modules/
 .env
 cookie/
+*.log
+test-v5-url.js

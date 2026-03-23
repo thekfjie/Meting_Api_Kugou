@@ -11,6 +11,10 @@ import {
   getKugouPublicSong
 } from '../utils/kugou-songinfo.js'
 import {
+  extractKugouHashFromResourceId,
+  getKugouUpstreamData
+} from '../utils/kugou-upstream.js'
+import {
   canUseKugouSharePlaylist,
   getKugouPlaylistFromShare,
   normalizeKugouSharePlaylistInput
@@ -90,6 +94,9 @@ export default async (c) => {
   let cacheKey = buildCacheKey(effectiveKugouPool)
   let data = cache.get(cacheKey)
   let cacheHit = data !== undefined
+  const kugouHashId = server === 'kugou'
+    ? extractKugouHashFromResourceId(id)
+    : id
   if (server === 'kugou') {
     const quotaExempt = shouldExemptKugouQuota({
       server,
@@ -161,22 +168,33 @@ export default async (c) => {
       : ''
     if (cookie) meting.cookie(cookie)
 
-    if (server === 'kugou' && type === 'pic' && cookie) {
-      const cover = await getKugouCoverFromSonginfo({ hash: id, cookie, size: 400 })
+    if (server === 'kugou' && !isKugouSharePlaylist) {
+      const upstreamData = await getKugouUpstreamData({
+        type,
+        id,
+        cookie
+      })
+      if (upstreamData != null) {
+        data = upstreamData
+      }
+    }
+
+    if (server === 'kugou' && type === 'pic' && data === undefined && cookie) {
+      const cover = await getKugouCoverFromSonginfo({ hash: kugouHashId, cookie, size: 400 })
       if (cover) {
         data = cover
       }
     }
 
     if (server === 'kugou' && type === 'pic' && data === undefined) {
-      const publicCover = await getKugouCoverFromPublicSong({ hash: id, size: 400 })
+      const publicCover = await getKugouCoverFromPublicSong({ hash: kugouHashId, size: 400 })
       if (publicCover) {
         data = publicCover
       }
     }
 
     if (server === 'kugou' && type === 'song' && data === undefined) {
-      const publicSong = await getKugouPublicSong(id)
+      const publicSong = await getKugouPublicSong(kugouHashId)
       if (publicSong) {
         data = publicSong
       }
@@ -189,9 +207,12 @@ export default async (c) => {
 
       if (data == null) {
         const method = METING_METHODS[type]
+        const metingId = server === 'kugou' && ['song', 'lrc', 'url', 'pic'].includes(type)
+          ? kugouHashId
+          : id
         let response
         try {
-          response = await meting[method](id)
+          response = await meting[method](metingId)
         } catch (error) {
           throw new HTTPException(500, { message: '上游 API 调用失败' })
         }
@@ -282,12 +303,14 @@ export default async (c) => {
 
     // 兼容 ID 格式：标准用 url_id，酷狗原始用 hash
     const urlId = server === 'kugou'
-      ? (x.hash || x.url_id || id)
+      ? (x.url_id || x.hash || id)
       : (x.url_id || x.hash || id)
     const picId = server === 'kugou'
-      ? (x.hash || x.pic_id || x.url_id || id)
+      ? (x.pic_id || x.hash || x.url_id || id)
       : (x.pic_id || x.album_audio_id || x.albumid || x.hash || id)
-    const lrcId = x.lyric_id || x.hash || id
+    const lrcId = server === 'kugou'
+      ? (x.lyric_id || x.hash || id)
+      : (x.lyric_id || x.hash || id)
 
     return {
       title,

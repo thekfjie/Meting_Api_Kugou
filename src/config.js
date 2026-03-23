@@ -28,6 +28,10 @@ export default {
     token: process.env.METING_TOKEN || 'token',
     kugou: {
       premiumKey: process.env.METING_KUGOU_PREMIUM_KEY || '',
+      upstream: {
+        url: process.env.METING_KUGOU_UPSTREAM_URL || '',
+        timeoutMs: toNumber(process.env.METING_KUGOU_UPSTREAM_TIMEOUT_MS, 8000)
+      },
       status: {
         freeHash: process.env.METING_KUGOU_STATUS_FREE_HASH || '83995C1F356E6FC35A14D27940882F88',
         vipHash: process.env.METING_KUGOU_STATUS_VIP_HASH || '',

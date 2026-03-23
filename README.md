@@ -8,6 +8,7 @@
 - 🚀 基于 Hono.js 高性能框架
 - 💾 内置 LRU 缓存机制,减少上游 API 调用
 - 🔐 HMAC-SHA1 令牌鉴权,保护敏感接口
+- 🔄 支持把 `KuGouMusicApi` 作为酷狗上游接入,保留 Meting 风格输出与 302 跳转语义
 - 🐳 Docker 部署支持
 - 📝 结构化 JSON 日志输出
 
@@ -45,6 +46,35 @@ yarn dev
 
 # 生产模式
 yarn start
+```
+
+### PM2 部署
+
+如果你希望把 `Meting-API` 和 `KuGouMusicApi` 一起交给 PM2 托管,建议把两个项目放在同级目录:
+
+```text
+E:/my_service/
+  ├── Meting-API/
+  └── KuGouMusicApi/
+```
+
+然后在 `Meting-API` 根目录执行:
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+该配置会同时启动:
+
+- `meting-api`: 当前服务
+- `kugou-upstream`: 指向同级目录下的 `KuGouMusicApi`
+
+两个服务各自读取自己目录内的 `.env` 文件,因此修改环境变量后需要执行:
+
+```bash
+pm2 restart meting-api --update-env
+pm2 restart kugou-upstream --update-env
 ```
 
 ### Docker 部署
@@ -149,6 +179,7 @@ docker run -d \
 | `METING_URL` | API 服务的公网访问地址(用于生成回调 URL) | - |
 | `METING_TOKEN` | HMAC 签名密钥 | `token` |
 | `METING_KUGOU_PREMIUM_KEY` | 酷狗 Pro 池访问 Key,命中后可在额度内直连 Pro 池 | `` (空) |
+| `METING_KUGOU_UPSTREAM_URL` | 可选的酷狗 HTTP 上游地址,例如 `http://127.0.0.1:3100` | `` (空,关闭) |
 | `METING_COOKIE_ALLOW_HOSTS` | 允许使用 cookie 的 referrer 域名白名单(逗号分隔) | `` (空,不限制) |
 | `METING_COOKIE_NETEASE` | 网易云音乐 Cookie | - |
 | `METING_COOKIE_TENCENT` | QQ音乐 Cookie | - |
@@ -317,6 +348,31 @@ METING_COOKIE_ALLOW_HOSTS=example.com,music.example.com
 不设置时不限制来源。这可以防止 Cookie 被第三方滥用。
 
 ## Kugou 监控状态说明
+
+## Kugou Upstream 接入
+
+当配置 `METING_KUGOU_UPSTREAM_URL` 后,`server=kugou` 的以下能力会优先走上游服务:
+
+- `search`
+- `song`
+- `playlist`
+- `lrc`
+- `url`
+- `pic`
+
+外层仍保持 Meting 输出格式:
+
+- 列表接口继续返回 `title` / `author` / `url` / `pic` / `lrc`
+- `type=url` 继续返回 `302` 到酷狗真实音频地址
+- `type=pic` 继续返回 `302` 到酷狗真实封面地址
+
+推荐把上游部署在本机回环地址,例如:
+
+```bash
+METING_KUGOU_UPSTREAM_URL=http://127.0.0.1:3100
+```
+
+如果上游不可用,当前实现会自动回退到原有链路。
 
 `/monitor/kugou` 用来观察酷狗路由池当前能力。这里有两类字段容易混淆:
 
