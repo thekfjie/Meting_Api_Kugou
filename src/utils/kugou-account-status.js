@@ -3,6 +3,7 @@ import Meting from '@meting/core'
 import { readCookieFile } from './cookie.js'
 import { getKugouRuntimeSnapshot } from './kugou-runtime.js'
 import { getKugouSonginfo, parseKugouCookie } from './kugou-songinfo.js'
+import { getKugouUpstreamData, hasKugouUpstream } from './kugou-upstream.js'
 
 let cachedStatus = null
 let cachedAt = 0
@@ -10,6 +11,13 @@ let cachedAt = 0
 const nowIso = () => new Date().toISOString()
 
 const getPlayableUrl = (data) => data?.play_url || data?.play_backup_url || ''
+
+const getResolvedUrl = (data) => {
+  if (!data) return ''
+  if (typeof data === 'string') return data
+  if (typeof data?.url === 'string') return data.url
+  return ''
+}
 
 const getFirstItem = (data) => {
   if (Array.isArray(data)) return data[0] || null
@@ -62,8 +70,10 @@ const getKugouAnonymousResolvedUrl = async (hash) => {
 }
 
 const classifyVipCapability = ({ songinfo, resolvedUrl }) => {
-  if (resolvedUrl) {
-    if (resolvedUrl.includes('/yp/full/')) {
+  const normalizedResolvedUrl = getResolvedUrl(resolvedUrl)
+
+  if (normalizedResolvedUrl) {
+    if (normalizedResolvedUrl.includes('/yp/full/')) {
       return {
         vip: true,
         vipState: 'full',
@@ -71,12 +81,18 @@ const classifyVipCapability = ({ songinfo, resolvedUrl }) => {
       }
     }
 
-    if (resolvedUrl.includes('/yp/p_')) {
+    if (normalizedResolvedUrl.includes('/yp/p_')) {
       return {
         vip: false,
         vipState: 'preview',
         vipReason: 'resolved-url-preview'
       }
+    }
+
+    return {
+      vip: true,
+      vipState: 'full',
+      vipReason: 'resolved-url-direct'
     }
   }
 
@@ -255,12 +271,24 @@ const probeCookiePool = async (pool) => {
     }
   }
 
-  const basicData = await getKugouSonginfo({
-    hash: config.meting.kugou.status.freeHash,
-    cookie
-  })
+  const basicData = hasKugouUpstream()
+    ? await getKugouUpstreamData({
+      type: 'song',
+      id: config.meting.kugou.status.freeHash,
+      cookie
+    })
+    : await getKugouSonginfo({
+      hash: config.meting.kugou.status.freeHash,
+      cookie
+    })
 
-  const valid = Boolean(basicData?.hash || basicData?.audio_name || basicData?.song_name)
+  const valid = Boolean(
+    basicData?.hash ||
+    basicData?.audio_name ||
+    basicData?.song_name ||
+    basicData?.title ||
+    basicData?.name
+  )
 
   if (!valid) {
     return {
@@ -271,7 +299,7 @@ const probeCookiePool = async (pool) => {
       vip: null,
       vipState: 'untested',
       routeEligible: false,
-      statusReason: 'songinfo-probe-failed',
+      statusReason: hasKugouUpstream() ? 'upstream-basic-probe-failed' : 'songinfo-probe-failed',
       vipReason: 'not-tested'
     }
   }
@@ -290,15 +318,27 @@ const probeCookiePool = async (pool) => {
     }
   }
 
-  const vipData = await getKugouSonginfo({
-    hash: config.meting.kugou.status.vipHash,
-    cookie
-  })
+  const vipData = hasKugouUpstream()
+    ? await getKugouUpstreamData({
+      type: 'song',
+      id: config.meting.kugou.status.vipHash,
+      cookie
+    })
+    : await getKugouSonginfo({
+      hash: config.meting.kugou.status.vipHash,
+      cookie
+    })
 
-  const resolvedUrl = await getKugouResolvedUrl({
-    hash: config.meting.kugou.status.vipHash,
-    cookie
-  })
+  const resolvedUrl = hasKugouUpstream()
+    ? await getKugouUpstreamData({
+      type: 'url',
+      id: vipData?.url_id || vipData?.hash || config.meting.kugou.status.vipHash,
+      cookie
+    })
+    : await getKugouResolvedUrl({
+      hash: config.meting.kugou.status.vipHash,
+      cookie
+    })
 
   const vipResult = classifyVipCapability({
     songinfo: vipData,

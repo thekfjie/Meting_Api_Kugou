@@ -126,6 +126,7 @@ const mapStatusReason = (reason) => {
     'missing-cookie': '未配置对应 Cookie',
     'missing-required-fields': 'Cookie 关键字段不完整',
     'songinfo-probe-failed': '基础探活失败',
+    'upstream-basic-probe-failed': 'Upstream 基础探活失败',
     'anonymous-probe-failed': '匿名基础探活失败',
     ok: '状态正常',
     'anonymous-fallback': '匿名通道'
@@ -137,6 +138,7 @@ const mapVipReason = (reason) => {
   const map = {
     'resolved-url-full': 'Resolved URL 指向完整播放链接',
     'resolved-url-preview': 'Resolved URL 指向试听片段',
+    'resolved-url-direct': 'Resolved URL 返回可直连播放地址',
     'vip-hash-unset': '未设置 VIP 探针歌曲',
     'vip-probe-no-data': 'VIP 探针无返回',
     'vip-probe-no-url': 'VIP 探针未返回播放链接',
