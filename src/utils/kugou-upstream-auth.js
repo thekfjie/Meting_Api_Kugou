@@ -56,6 +56,13 @@ const mergeCookies = (cookies = []) => {
   return out
 }
 
+const cookieMapToHeader = (cookieMap = {}) => {
+  return Object.entries(cookieMap)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => `${key}=${String(value).trim()}`)
+    .join('; ')
+}
+
 const getAuthCookie = (cookie = '') => {
   const parsed = parseKugouCookie(cookie)
   const out = []
@@ -88,6 +95,43 @@ export const fetchKugouQrLogin = async () => {
     key,
     url: qrResp?.body?.data?.url || '',
     base64: qrResp?.body?.data?.base64 || ''
+  }
+}
+
+export const sendKugouCaptcha = async ({ mobile, cookieMap = {} }) => {
+  const response = await request('/captcha/sent', {
+    query: {
+      mobile,
+      timestamp: Date.now()
+    },
+    cookie: cookieMapToHeader(cookieMap)
+  })
+
+  return {
+    body: response?.body || null,
+    cookieMap: {
+      ...cookieMap,
+      ...mergeCookies(response?.cookies || [])
+    }
+  }
+}
+
+export const loginKugouCellphone = async ({ mobile, code, cookieMap = {} }) => {
+  const response = await request('/login/cellphone', {
+    query: {
+      mobile,
+      code,
+      timestamp: Date.now()
+    },
+    cookie: cookieMapToHeader(cookieMap)
+  })
+
+  return {
+    body: response?.body || null,
+    cookieMap: {
+      ...cookieMap,
+      ...mergeCookies(response?.cookies || [])
+    }
   }
 }
 

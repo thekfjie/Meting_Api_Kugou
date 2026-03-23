@@ -70,6 +70,18 @@ pm2 save
 - `meting-api`: 当前服务
 - `kugou-upstream`: 指向同级目录下的 `KuGouMusicApi`
 
+如果服务器上之前只托管了 `meting-api`, 拉取更新后需要额外执行一次:
+
+```bash
+pm2 start ecosystem.config.cjs --only kugou-upstream
+pm2 save
+```
+
+如果你已经用反向代理把 `Meting-API` 暴露为例如 `https://api.kfjie.me/api`, 后台页会自动复用同一个前缀:
+
+- 未登录访问 `https://api.kfjie.me/api/admin` 时,只显示基础监控信息
+- 登录后访问同一路径,就会进入完整后台页
+
 两个服务各自读取自己目录内的 `.env` 文件,因此修改环境变量后需要执行:
 
 ```bash
