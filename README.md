@@ -90,6 +90,67 @@ pm2 restart meting-api --update-env
 pm2 restart kugou-upstream --update-env
 ```
 
+### PM2 运维速查
+
+下面这几条命令最常用,可以直接按场景套用。
+
+**日常改 `.env` 或密钥后重启单个服务**
+
+```bash
+pm2 restart meting-api --update-env
+pm2 restart kugou-upstream --update-env
+```
+
+- 适用: 修改 `Meting-API/.env`、`KuGouMusicApi/.env`、管理页密码、token、upstream 地址、平台参数等
+- 说明: `--update-env` 会让 PM2 重新读取最新环境变量
+
+**改了 `ecosystem.config.cjs` 后整体重载**
+
+```bash
+pm2 restart ecosystem.config.cjs --update-env
+```
+
+- 适用: 修改 PM2 `cwd`、脚本路径、代理禁用变量、统一 env 等
+- 说明: 这条命令更适合“配置文件改动”,前提是两个 app 已经在 PM2 中注册过
+
+**第一次切到新结构,或 PM2 状态混乱时重建**
+
+```bash
+pm2 delete kugou-upstream
+pm2 delete meting-api
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+- 适用: 从旧部署切到当前单仓库结构,或者 PM2 还记着旧路径/旧进程名/旧环境
+- 说明: 这是最干净的“重建进程定义”方式,会先删掉旧 app 再按当前配置创建
+
+**只给旧实例补起 `kugou-upstream`**
+
+```bash
+pm2 start ecosystem.config.cjs --only kugou-upstream
+pm2 save
+```
+
+- 适用: 服务器上原本只有 `meting-api`,更新后想补起新的 upstream 进程
+
+**查看状态与日志**
+
+```bash
+pm2 ls
+pm2 logs meting-api --lines 100 --nostream
+pm2 logs kugou-upstream --lines 100 --nostream
+```
+
+**查看当前 PM2 进程实际生效的环境变量**
+
+```bash
+pm2 env meting-api
+pm2 env kugou-upstream
+```
+
+- 排查重点: 是否仍带有旧的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`,以及 `METING_COOKIE_KUGOU*` 是否还在环境里覆盖文件池
+
 ### Docker 部署
 
 ```bash
