@@ -196,7 +196,7 @@ const buildInternalStatus = async () => {
       vip: false,
       vipState: 'unreachable',
       routeEligible: true,
-      statusReason: 'anonymous-probe-failed',
+      statusReason: 'legacy-anonymous-meting',
       vipReason: 'not-tested'
     }
   }

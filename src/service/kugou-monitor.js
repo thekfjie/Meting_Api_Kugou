@@ -128,6 +128,7 @@ const mapStatusReason = (reason) => {
     'songinfo-probe-failed': '基础探活失败',
     'upstream-basic-probe-failed': 'Upstream 基础探活失败',
     'anonymous-probe-failed': '匿名基础探活失败',
+    'legacy-anonymous-meting': '原生 Meting 游客探活',
     ok: '状态正常',
     'anonymous-fallback': '匿名通道'
   }

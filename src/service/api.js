@@ -168,7 +168,7 @@ export default async (c) => {
       : ''
     if (cookie) meting.cookie(cookie)
 
-    if (server === 'kugou' && !isKugouSharePlaylist) {
+    if (server === 'kugou' && effectiveKugouPool !== 'internal' && !isKugouSharePlaylist) {
       const upstreamData = await getKugouUpstreamData({
         type,
         id,
