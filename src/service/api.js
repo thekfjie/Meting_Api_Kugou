@@ -238,6 +238,17 @@ export default async (c) => {
 
   if (type === 'url') {
     let url = data.url
+    if (!url && server === 'kugou') {
+      url = await getNeteaseFallbackUrlForKugou({
+        id,
+        kugouHashId,
+        cookie: await readCookieFile(server, getCookiePool({ server, allowCookie, kugouPool: effectiveKugouPool }))
+      })
+      if (url) {
+        c.header('x-kugou-route', 'netease-fallback')
+        c.header('x-kugou-notice', encodeURIComponent('酷狗无可用播放链接，已回退到网易云搜索结果'))
+      }
+    }
     if (!url) {
       return c.body(null, 404)
     }
@@ -402,6 +413,96 @@ const buildResourceUrl = ({ server, type, id, requestKey, requestSource, kugouPo
     url.searchParams.set('key', requestKey)
   }
   return url.toString()
+}
+
+const normalizeText = (value) => String(value || '').trim()
+
+const normalizeTitle = (value) => normalizeText(value).toLowerCase().replace(//g, '')
+
+const normalizeAuthor = (value) => normalizeText(value)
+  .toLowerCase()
+  .replace(//g, '')
+  .split(/[/、,&]/)
+  .map(item => item.trim())
+  .filter(Boolean)
+
+const normalizeNeteaseUrl = (url) => {
+  let out = String(url || '').trim()
+  if (!out) return ''
+  out = out
+    .replace('://m7c.', '://m7.')
+    .replace('://m8c.', '://m8.')
+    .replace('http://', 'https://')
+  if (out.includes('vuutv=')) {
+    const tempUrl = new URL(out)
+    tempUrl.search = ''
+    out = tempUrl.toString()
+  }
+  return out
+}
+
+const pickBestNeteaseCandidate = (items, { title, author }) => {
+  const normalizedTitle = normalizeTitle(title)
+  const normalizedAuthors = normalizeAuthor(author)
+
+  const scored = items
+    .map(item => {
+      const itemTitle = normalizeTitle(item?.title || item?.name)
+      const itemAuthors = normalizeAuthor(item?.author)
+      let score = 0
+
+      if (itemTitle && normalizedTitle && itemTitle === normalizedTitle) score += 5
+      else if (itemTitle && normalizedTitle && (itemTitle.includes(normalizedTitle) || normalizedTitle.includes(itemTitle))) score += 3
+
+      if (normalizedAuthors.length > 0 && itemAuthors.length > 0) {
+        const overlap = normalizedAuthors.filter(name => itemAuthors.includes(name)).length
+        score += overlap * 2
+      }
+
+      return { item, score }
+    })
+    .sort((left, right) => right.score - left.score)
+
+  return scored[0]?.item || null
+}
+
+const getKugouFallbackMeta = async ({ kugouHashId, id, cookie }) => {
+  const upstreamSong = cookie
+    ? await getKugouUpstreamData({ type: 'song', id, cookie })
+    : null
+  if (upstreamSong?.title || upstreamSong?.author) return upstreamSong
+
+  const publicSong = await getKugouPublicSong(kugouHashId)
+  if (publicSong?.title || publicSong?.author) return publicSong
+
+  return null
+}
+
+const getNeteaseFallbackUrlForKugou = async ({ id, kugouHashId, cookie }) => {
+  const meta = await getKugouFallbackMeta({ kugouHashId, id, cookie })
+  const title = normalizeText(meta?.title || meta?.name)
+  const author = normalizeText(meta?.author)
+  if (!title) return ''
+
+  try {
+    const meting = new Meting('netease')
+    meting.format(true)
+    const query = author ? `${title} ${author}` : title
+    const searchResponse = await meting.search(query)
+    const candidates = JSON.parse(searchResponse)
+    const list = Array.isArray(candidates) ? candidates : []
+    if (list.length === 0) return ''
+
+    const matched = pickBestNeteaseCandidate(list, { title, author }) || list[0]
+    const candidateId = matched?.url_id || matched?.id
+    if (!candidateId) return ''
+
+    const urlResponse = await meting.url(String(candidateId))
+    const data = JSON.parse(urlResponse)
+    return normalizeNeteaseUrl(data?.url)
+  } catch (error) {
+    return ''
+  }
 }
 
 const auth = (server, type, id) => {
