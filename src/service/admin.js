@@ -203,6 +203,53 @@ const buttonHelp = [
   ['复制/迁移池', '复制会保留源池，迁移会把源池移动到目标池。']
 ]
 
+const beijingTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false
+})
+
+const formatDisplayTime = (value) => {
+  if (!value) return '暂无'
+  try {
+    return `${beijingTimeFormatter.format(new Date(value))} (UTC+8)`
+  } catch (error) {
+    return String(value)
+  }
+}
+
+const describeUpstreamPlatform = (value) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized || normalized === 'default') return 'default / 普通模式'
+  if (normalized === 'lite') return 'lite / 概念版'
+  return normalized
+}
+
+const renderMonitorOverview = (monitor) => {
+  const pools = [
+    { key: 'pro', title: 'Pro' },
+    { key: 'normal', title: 'Normal (CK)' },
+    { key: 'internal', title: 'Internal (Guest)' }
+  ]
+
+  return `
+    <div class="stack">
+      <div class="sourcebox"><strong>最近检查</strong><br>${escapeHtml(formatDisplayTime(monitor?.checkedAt))}<br>缓存 TTL：${escapeHtml(String(monitor?.ttlSeconds || 0))} 秒<br>本分钟剩余：${escapeHtml(String(monitor?.summary?.remainingMinute ?? 0))}</div>
+      <div class="monitor-grid">
+        ${pools.map(({ key, title }) => {
+          const data = monitor?.pools?.[key] || {}
+          const diagnostics = data.diagnostics || {}
+          return `<div class="sourcebox"><strong>${escapeHtml(title)}</strong><br>状态：${escapeHtml(data.label || '-')}<br>说明：${escapeHtml(data.detail || '-')}<br>最近请求：${escapeHtml(formatDisplayTime(data.lastRequestAt))}<br>基础探活：${escapeHtml(diagnostics.basicProbe || '-')}<br>VIP：${escapeHtml(diagnostics.vipState || '-')}<br>原因：${escapeHtml(diagnostics.statusReason || '-')}</div>`
+        }).join('')}
+      </div>
+    </div>`
+}
+
 const renderLoginPage = ({ message = '', basePath = '/music' }) => `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -224,11 +271,11 @@ const renderLoginPage = ({ message = '', basePath = '/music' }) => `<!doctype ht
 <body>
   <form class="card" method="post" action="${buildManageLogin(basePath)}">
     <h1>Admin</h1>
-    <p>输入后台密码进入管理页。登录成功后可管理 CK 池、二维码登录、短信验证码登录和 PM2 进程。</p>
+    <p>输入后台密码。</p>
     ${message ? `<div class="msg">${escapeHtml(message)}</div>` : ''}
     <input type="password" name="password" placeholder="后台密码" autocomplete="current-password">
     <button type="submit">登录</button>
-    <div class="note">监控页无需登录：<code>${escapeHtml(`${basePath}/manage/monitor`)}</code></div>
+    <div class="note">公开监控：<code>${escapeHtml(`${basePath}/manage/monitor`)}</code></div>
   </form>
 </body>
 </html>`
@@ -259,7 +306,7 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
     .qr{max-width:220px;border-radius:12px;border:1px solid var(--line);background:#fff;padding:10px}.split{display:grid;grid-template-columns:1.3fr .7fr;gap:16px}.list{margin:0;padding-left:18px}
     .guide{padding-left:18px;margin:0}.guide li{margin:6px 0}.help{margin:0;padding-left:18px}.help li{margin:6px 0}.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--code);font-size:12px;color:var(--muted)}
     .hint{padding:12px 14px;border-radius:12px;background:var(--code);color:var(--muted);font-size:13px}.warnbox{padding:12px 14px;border-radius:12px;background:var(--warn-soft);color:var(--warn);font-size:13px}
-    .stack{display:grid;gap:10px}.sourcebox{padding:12px 14px;border-radius:12px;background:var(--code);color:var(--muted);font-size:13px}
+    .stack{display:grid;gap:10px}.sourcebox{padding:12px 14px;border-radius:12px;background:var(--code);color:var(--muted);font-size:13px}.monitor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
     @media (max-width:880px){.split{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -268,7 +315,7 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
     <div class="top">
       <div>
         <h1 class="title">Meting Admin</h1>
-        <div class="sub">统一查看 Kugou 双池、上游登录状态与 PM2 进程。当前入口属于 API 服务本体页面，不是独立后台站。</div>
+        <div class="sub">统一查看 Kugou 双池、上游登录状态与 PM2 进程。</div>
       </div>
       <form method="post" action="${buildManageRoot(basePath)}/logout"><button class="ghost btn" type="submit">退出登录</button></form>
     </div>
@@ -326,7 +373,7 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
       <section class="card split" style="grid-column:1/-1">
         <div>
           <h2>Kugou 登录</h2>
-          <p>当前上游启用方式：<code>${escapeHtml(upstreamPlatform || 'default')}</code>。根据 KuGouMusicApi 文档，登录支持密码、短信验证码、酷狗二维码、微信开放平台；其中密码登录文档明确标注“可能需要验证，不推荐”。更稳的是二维码登录或短信验证码登录。</p>
+          <p>当前上游启用方式：<code>${escapeHtml(describeUpstreamPlatform(upstreamPlatform))}</code>。根据 KuGouMusicApi 文档，登录支持密码、短信验证码、酷狗二维码、微信开放平台；其中密码登录文档明确标注“可能需要验证，不推荐”。更稳的是二维码登录或短信验证码登录。</p>
           <ul class="list">
             <li>当前部署是 platform=lite，也就是概念版链路</li>
             <li>刷新登录用 /login/token，不是永久登录</li>
@@ -365,8 +412,8 @@ const renderAdminPage = ({ flash, basePath, pm2, pools, monitor, loginState, sms
       </section>
       <section class="card" style="grid-column:1/-1">
         <h2>Kugou 监控</h2>
-        <div class="muted">这里展示的就是公开监控页里的基础 JSON 内容，便于登录后继续比对。</div>
-        <pre class="mono">${escapeHtml(JSON.stringify(monitor, null, 2))}</pre>
+        ${renderMonitorOverview(monitor)}
+        <details style="margin-top:12px"><summary class="muted">查看原始 JSON</summary><pre class="mono">${escapeHtml(JSON.stringify(monitor, null, 2))}</pre></details>
       </section>
     </div>
   </div>
@@ -428,9 +475,8 @@ const renderPublicInfoPage = ({ basePath, monitor }) => `<!doctype html>
 </head>
 <body>
   <div class="wrap">
-    <div class="top"><div><h1>Meting Monitor</h1><p>未登录时只展示基础状态。</p></div><a class="btn" href="${buildManageLogin(basePath)}">后台登录</a></div>
-    <div class="hint">如果你只想确认号池可用性，看这里就够了；需要二维码登录、短信验证码登录、清空/迁移池、PM2 重启等操作，再进入登录页。</div>
-    <div class="card"><pre>${escapeHtml(JSON.stringify(monitor, null, 2))}</pre></div>
+    <div class="top"><div><h1>Meting Monitor</h1><p>北京时间展示</p></div><a class="btn" href="${buildManageLogin(basePath)}">后台登录</a></div>
+    <div class="card">${renderMonitorOverview(monitor)}</div>
   </div>
 </body>
 </html>`
