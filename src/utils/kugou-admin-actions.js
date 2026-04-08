@@ -53,11 +53,64 @@ const isRefreshSuccess = (response) => {
 
 const normalizePool = (pool) => (pool === 'general' ? 'general' : 'premium')
 
+const parseDateTime = (value) => {
+  const normalized = normalizeText(value)
+  if (!normalized) return 0
+
+  const candidate = normalized.includes('T')
+    ? normalized
+    : normalized.replace(' ', 'T')
+  const withZone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(candidate)
+    ? candidate
+    : `${candidate}+08:00`
+  const parsed = Date.parse(withZone)
+
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const hasFutureExpire = (value) => {
+  const parsed = parseDateTime(value)
+  return parsed > Date.now()
+}
+
+const pickPreferredBusiVip = (vipData = {}) => {
+  const entries = Array.isArray(vipData?.busi_vip) ? vipData.busi_vip : []
+  if (!entries.length) return null
+
+  return entries
+    .map(item => {
+      const expiresAt = Math.max(
+        parseDateTime(item?.vip_end_time),
+        parseDateTime(item?.vip_clearday)
+      )
+      const active = Number(item?.is_vip || 0) > 0 || expiresAt > Date.now()
+
+      return {
+        item,
+        expiresAt,
+        active,
+        concept: normalizeText(item?.busi_type).toLowerCase() === 'concept'
+      }
+    })
+    .sort((left, right) => {
+      if (Number(right.active) !== Number(left.active)) return Number(right.active) - Number(left.active)
+      if (Number(right.concept) !== Number(left.concept)) return Number(right.concept) - Number(left.concept)
+      return right.expiresAt - left.expiresAt
+    })[0]?.item || null
+}
+
 const hasVip = (account = null) => {
   if (!account) return false
-  if (normalizeText(account.expireTime)) return true
-  const vipType = Number(account.vipType || 0)
-  return Number.isFinite(vipType) && vipType > 0
+  if (typeof account.hasActiveVip === 'boolean') return account.hasActiveVip
+  if (hasFutureExpire(account.expireTime)) return true
+
+  const vipTypeText = normalizeText(account.vipType).toLowerCase()
+  if (!vipTypeText) return false
+
+  const vipType = Number(vipTypeText)
+  if (Number.isFinite(vipType)) return vipType > 0
+
+  return ['vip', 'svip', 'tvip', 'concept', 'lite'].some(keyword => vipTypeText.includes(keyword))
 }
 
 const buildErrorResult = ({
@@ -96,7 +149,7 @@ const buildCookieUpdatePayload = ({ existingCookie = '', cookieMap = {}, profile
   const account = summarizeKugouProfile(profile)
 
   if (account.userId) mergedMap.userid = account.userId
-  if (account.vipType) mergedMap.vip_type = account.vipType
+  if (account.cookieVipType) mergedMap.vip_type = account.cookieVipType
   if (account.vipToken) mergedMap.vip_token = account.vipToken
 
   const current = parseSimpleCookie(existingCookie)
@@ -144,14 +197,32 @@ export const getKugouPoolLabel = (pool) => {
 export const summarizeKugouProfile = (profile = null) => {
   const detailData = profile?.detail?.data || {}
   const vipData = profile?.vip?.data || {}
+  const preferredBusiVip = pickPreferredBusiVip(vipData)
+  const topLevelExpire = pickText(vipData.expire_time, vipData.vip_end_time, vipData.expire)
+  const busiExpire = pickText(preferredBusiVip?.vip_end_time, preferredBusiVip?.vip_clearday)
+  const displayVipType = preferredBusiVip
+    ? [normalizeText(preferredBusiVip?.busi_type), normalizeText(preferredBusiVip?.product_type)].filter(Boolean).join('/')
+    : ''
+  const cookieVipType = pickText(vipData.vip_type, vipData.type)
+  const hasActiveVip = hasFutureExpire(busiExpire) ||
+    hasFutureExpire(topLevelExpire) ||
+    Boolean(Number(vipData.is_vip || 0)) ||
+    Boolean(Number(preferredBusiVip?.is_vip || 0)) ||
+    (() => {
+      const numericVipType = Number(cookieVipType)
+      return Number.isFinite(numericVipType) && numericVipType > 0
+    })()
 
   return {
     userId: pickText(detailData.userid, detailData.user_id, vipData.userid),
     nickname: pickText(detailData.nickname, detailData.uname),
-    vipType: pickText(vipData.vip_type, vipData.type),
-    vipLevel: pickText(vipData.vip_level, vipData.level),
-    expireTime: pickText(vipData.expire_time, vipData.vip_end_time, vipData.expire),
-    vipToken: pickText(vipData.vip_token, detailData.vip_token)
+    vipType: displayVipType || cookieVipType,
+    cookieVipType,
+    vipLevel: pickText(vipData.vip_level, vipData.level, vipData.svip_level),
+    expireTime: hasFutureExpire(busiExpire) ? busiExpire : pickText(topLevelExpire, busiExpire),
+    vipToken: pickText(vipData.vip_token, detailData.vip_token),
+    vipMode: pickText(preferredBusiVip?.busi_type, preferredBusiVip?.product_type),
+    hasActiveVip
   }
 }
 

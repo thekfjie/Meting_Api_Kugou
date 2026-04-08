@@ -267,3 +267,30 @@ Kugou 的读取顺序是：
 - `src/utils/cookie.js`
 - `ecosystem.config.cjs`
 
+## Platform Switch Quick Reference
+
+Keep the current single-upstream production deployment in regular mode by using:
+
+```bash
+platform=
+```
+
+This value belongs to `KuGouMusicApi/.env`, not the root `.env`.
+
+When you want to enable lite later, change only that file to:
+
+```bash
+platform=lite
+```
+
+Then reload the upstream process:
+
+```bash
+pm2 restart kugou-upstream --update-env
+```
+
+Notes:
+
+- Do not use `platform=''`; use `platform=` for regular mode.
+- After switching between regular and lite, re-login or refresh the Kugou pool because cross-platform token reuse is not guaranteed.
+- Example files are provided in `KuGouMusicApi/.env.default.example` and `KuGouMusicApi/.env.lite.example`.

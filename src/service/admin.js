@@ -56,7 +56,10 @@ const time = (v) => { if (!v) return '暂无'; try { return `${fmt.format(new Da
 const sourceLabel = (v) => v === 'env' ? '环境变量' : (v === 'file' ? '文件池' : '未配置')
 const upstreamLabel = (v) => v === 'hit' ? '命中 upstream' : (v === 'fallback-meting' ? 'upstream 失败后回退' : '未命中 / 未尝试')
 const qrLabel = (v) => ({ 0: '二维码已过期', 1: '等待扫码', 2: '已扫码等待确认', 4: '登录成功，可写入池' }[Number(v || 0)] || `未知状态 ${v}`)
-const platformLabel = (v) => txt(v).toLowerCase() || 'default'
+const normalizePlatformValue = (v) => txt(v).replace(/^['"]+|['"]+$/g, '').toLowerCase()
+const platformMode = (v) => normalizePlatformValue(v) === 'lite' ? 'lite' : 'default'
+const platformLabel = (v) => platformMode(v)
+const platformDisplayLabel = (v) => platformMode(v) === 'lite' ? 'lite (concept)' : 'default (regular)'
 const root = (base) => `${base}/manage`
 const loginPath = (base) => `${root(base)}/login`
 const wantsJson = (c) => c.req.query('format') === 'json' || (String(c.req.header('accept') || '').toLowerCase().includes('application/json') && !String(c.req.header('accept') || '').toLowerCase().includes('text/html'))
@@ -107,7 +110,7 @@ const upstreamPlatform = async () => {
   try {
     const content = await readFile(resolve(process.cwd(), 'KuGouMusicApi/.env'), 'utf8')
     const line = content.split(/\r?\n/).find(item => item.trim().startsWith('platform=')) || ''
-    return line.split('=').slice(1).join('=').trim() || 'default'
+    return platformMode(line.split('=').slice(1).join('='))
   } catch { return 'default' }
 }
 
@@ -148,13 +151,131 @@ const poolView = async (pool) => {
 
 const resultText = (r) => r ? `${r.ok ? '成功' : '失败'} / ${txt(r.message) || '-'} / ${time(r.at)}` : '暂无'
 
+const commonStyle = `
+:root {
+  --bg: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #0f172a;
+  --text-sub: #64748b;
+  --border: #e2e8f0;
+  --primary: #0f172a;
+  --primary-hover: #334155;
+  --primary-text: #ffffff;
+  --danger: #ef4444;
+  --danger-hover: #b91c1c;
+  --flash-bg: #dcfce7;
+  --flash-text: #166534;
+  --flash-border: #bbf7d0;
+  --warn-bg: #fef2f2;
+  --warn-text: #991b1b;
+  --warn-border: #fecaca;
+  --hint-bg: #f1f5f9;
+  --hint-text: #475569;
+  --ring: rgba(15, 23, 42, 0.15);
+  --radius: 16px;
+  --font: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b;
+    --bg-card: #18181b;
+    --text-main: #fafafa;
+    --text-sub: #a1a1aa;
+    --border: #27272a;
+    --primary: #fafafa;
+    --primary-hover: #e4e4e7;
+    --primary-text: #09090b;
+    --danger: #ef4444;
+    --danger-hover: #f87171;
+    --flash-bg: #14532d;
+    --flash-text: #86efac;
+    --flash-border: #166534;
+    --warn-bg: #7f1d1d;
+    --warn-text: #fca5a5;
+    --warn-border: #991b1b;
+    --hint-bg: #27272a;
+    --hint-text: #d4d4d8;
+    --ring: rgba(250, 250, 250, 0.2);
+  }
+}
+body { margin:0; background:var(--bg); color:var(--text-main); font:14px/1.6 var(--font); transition:background 0.3s,color 0.3s; -webkit-font-smoothing:antialiased; }
+.wrap { max-width:1200px; margin:0 auto; padding:40px 24px; }
+.card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; box-shadow:0 1px 3px rgba(0,0,0,.05); transition:transform 0.2s,box-shadow 0.2s; }
+.card:hover { box-shadow:0 10px 40px -10px rgba(0,0,0,.08); }
+h1,h2,h3 { margin:0 0 16px; font-weight:600; color:var(--text-main); letter-spacing:-0.02em; }
+h1 { font-size:24px; }
+h2 { font-size:18px; }
+h3 { font-size:15px; margin-top:20px; }
+.sub,.muted { color:var(--text-sub); font-size:13px; }
+.flash,.warn,.hint { padding:12px 16px; border-radius:8px; margin-bottom:16px; font-size:13px; line-height:1.5; border:1px solid transparent; }
+.flash { background:var(--flash-bg); color:var(--flash-text); border-color:var(--flash-border); }
+.warn { background:var(--warn-bg); color:var(--warn-text); border-color:var(--warn-border); }
+.hint { background:var(--hint-bg); color:var(--hint-text); }
+button, .btn { border:none; border-radius:8px; padding:8px 16px; color:var(--primary-text); background:var(--primary); cursor:pointer; font-weight:500; font-size:13px; transition:all 0.2s; display:inline-flex; align-items:center; justify-content:center; text-decoration:none; box-sizing:border-box; }
+button:hover, .btn:hover { background:var(--primary-hover); transform:translateY(-1px); }
+button:active, .btn:active { transform:translateY(0); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline:none; box-shadow:0 0 0 3px var(--ring); }
+.ghost { background:transparent; color:var(--text-main); border:1px solid var(--border); }
+.ghost:hover { background:var(--hint-bg); color:var(--text-main); }
+.danger { background:var(--danger); color:#fff; }
+.danger:hover { background:var(--danger-hover); }
+input, select { width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-main); box-sizing:border-box; font-family:inherit; font-size:14px; transition:border-color 0.2s,box-shadow 0.2s; }
+input:focus, select:focus { outline:none; border-color:var(--primary); }
+label { display:block; font-size:13px; font-weight:500; color:var(--text-main); margin:12px 0 6px; }
+label:first-child { margin-top:0; }
+code, pre { font-family:"JetBrains Mono", Consolas, monospace; font-size:13px; }
+code { background:var(--hint-bg); padding:3px 6px; border-radius:4px; color:var(--text-main); word-break:break-all; }
+pre { white-space:pre-wrap; word-break:break-word; background:var(--bg); padding:16px; border-radius:8px; border:1px solid var(--border); overflow-x:auto; color:var(--text-sub); }
+.table-wrap { overflow-x:auto; margin-top:8px; }
+`
+
+const pageStyle = commonStyle + `
+.top { display:flex; justify-content:space-between; align-items:center; margin-bottom:32px; }
+.top-title { display:flex; flex-direction:column; gap:4px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:24px; }
+.full { grid-column:1/-1; }
+table { width:100%; border-collapse:collapse; font-size:13px; min-width:600px; }
+th,td { padding:12px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:middle; }
+th { color:var(--text-sub); font-weight:500; font-size:12px; }
+tr:last-child td { border-bottom:none; }
+form { margin:0; }
+.actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
+.mini { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+.subcard { padding:16px; border-radius:12px; background:var(--bg); border:1px solid var(--border); }
+.subcard strong { display:block; margin-bottom:8px; font-size:14px; color:var(--text-main); font-weight:600; }
+.subcard div { color:var(--text-sub); font-size:13px; margin-bottom:4px; }
+.qr { max-width:200px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:12px; display:block; }
+details { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-top:16px; }
+summary { cursor:pointer; font-weight:500; color:var(--text-main); user-select:none; }
+@media (max-width: 768px) {
+  .wrap { padding: 24px 16px; }
+  .grid { grid-template-columns: 1fr; }
+}
+`
+
+const loginStyle = commonStyle + `
+body { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.card { width:min(400px, 90vw); padding:32px; }
+input { margin:12px 0 24px; }
+button { width:100%; padding:12px 16px; font-weight:600; }
+.msg { padding:12px 16px; border-radius:8px; background:var(--warn-bg); color:var(--warn-text); margin-bottom:16px; border:1px solid var(--warn-border); font-size:13px; }
+p { margin: 16px 0 0; font-size:13px; color:var(--text-sub); }
+`
+
+const publicStyle = commonStyle + `
+.header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; gap:16px; flex-wrap:wrap; }
+@media (max-width: 768px) {
+  .wrap { padding: 24px 16px; }
+}
+`
+
 const renderMonitorRefreshSection = (basePath, mon) => `
 <section class="card full">
   <h2>探针控制</h2>
   <div class="hint">
     当前 VIP 探针缓存剩余：${esc(String(mon?.cacheRemainingSeconds ?? 0))} 秒
     <br>预计下次重新探测：${esc(time(mon?.nextCheckAt))}
-    <br>现在改成固定约 5 分钟并带随机抖动，不再按很短周期重复探测。
+    <br>默认采用约 5 分钟并带随机抖动的缓存窗口，避免过于频繁地重复探测。
   </div>
   <div class="actions">
     <form method="post" action="${root(basePath)}/kugou/status/refresh">
@@ -170,55 +291,54 @@ const renderRequestLogsSection = (logs) => `
     这里只展示整理后的最近请求，不展示原始日志。
     <br>摘要文件：<code>${esc(getRequestSummaryLogPath())}</code>
   </div>
-  <table>
-    <thead>
-      <tr>
-        <th>时间</th>
-        <th>入口</th>
-        <th>请求</th>
-        <th>链路</th>
-        <th>结果摘要</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${logs.length
-        ? logs.map(item => `<tr><td>${esc(time(item.at))}</td><td>${esc(item.path || '-')}</td><td>${esc([item.server, item.type, item.id].filter(Boolean).join(' / ') || '-')}</td><td>${esc([item.pool || '-', item.cache || '-', item.upstream || '-'].join(' / '))}</td><td>${esc((item.items || []).join(' | ') || '-')}</td></tr>`).join('')
-        : '<tr><td colspan="5">暂无请求摘要</td></tr>'}
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>入口</th>
+          <th>请求</th>
+          <th>链路</th>
+          <th>结果摘要</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${logs.length
+          ? logs.map(item => `<tr><td>${esc(time(item.at))}</td><td>${esc(item.path || '-')}</td><td>${esc([item.server, item.type, item.id].filter(Boolean).join(' / ') || '-')}</td><td>${esc([item.pool || '-', item.cache || '-', item.upstream || '-'].join(' / '))}</td><td>${esc((item.items || []).join(' | ') || '-')}</td></tr>`).join('')
+          : '<tr><td colspan="5">暂无请求摘要</td></tr>'}
+      </tbody>
+    </table>
+  </div>
 </section>`
 
-const page = ({ flash, basePath, procs, pools, mon, qr, sms, platform, trace, warnings, logs }) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Meting Kugou 管理页</title><style>
-body{margin:0;background:#f5efe6;color:#261d15;font:14px/1.6 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif} .wrap{max-width:1220px;margin:0 auto;padding:24px}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
-.card{background:#fffaf5;border:1px solid #dcc8b0;border-radius:18px;padding:16px;box-shadow:0 10px 28px rgba(0,0,0,.08)} .full{grid-column:1/-1}
-h1,h2,h3{margin:0 0 10px} .sub,.muted{color:#6e5d4c} .flash,.warn,.hint{padding:12px 14px;border-radius:12px;margin-bottom:12px}
-.flash{background:#e8f3ef;border:1px solid #c9ded7}.warn{background:#f9e8df;color:#8a3f1b}.hint{background:#f5ece0;color:#6e5d4c}
-table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:8px 6px;border-bottom:1px solid #e4d5c4;text-align:left;vertical-align:top}
-form{margin:0} .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px} button{border:0;border-radius:12px;padding:10px 14px;color:#fff;background:#245c51;cursor:pointer;font-weight:600}
-.ghost{background:#8a6336}.danger{background:#9a4220} input,select{width:100%;padding:10px 12px;border:1px solid #dcc8b0;border-radius:12px;background:#fff;box-sizing:border-box}
-.mini{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.subcard{padding:12px;border-radius:12px;background:#f5ece0;color:#6e5d4c}
-code,pre{font-family:Consolas,monospace} pre{white-space:pre-wrap;word-break:break-word;background:#f9f3eb;padding:12px;border-radius:12px} .qr{max-width:220px;border:1px solid #dcc8b0;border-radius:12px;background:#fff;padding:10px}
-</style></head><body><div class="wrap">
-<div class="top"><div><h1>Meting Kugou 管理页</h1><div class="sub">先解决可观测性，再做刷新和一键领取。这里只做按需触发，不做 cron。</div></div><form method="post" action="${root(basePath)}/logout"><button class="ghost" type="submit">退出登录</button></form></div>
+const page = ({ flash, basePath, procs, pools, mon, qr, sms, platform, trace, warnings, logs }) => {
+  const liteActive = platformLabel(platform) === 'lite'
+  const claimHint = liteActive
+    ? '当前已切换到 lite (concept) 模式，可按需执行一键领取。URL 仍保持原有兼容行为。'
+    : '当前 upstream 运行在 default (regular) 模式；Lite 相关能力已保留在仓库里，但现在不启用。若要启用，请先把 KuGouMusicApi/.env 里的 platform 改成 lite 并重启 upstream。'
+  const claimDisabled = liteActive ? '' : ' disabled'
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Meting 管理控制台</title><style>${pageStyle}</style></head><body><div class="wrap">
+<div class="top"><div class="top-title"><h1>Meting 管理控制台</h1></div><form method="post" action="${root(basePath)}/logout"><button class="ghost" type="submit">退出登录</button></form></div>
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}${warnings.map(item => `<div class="warn">${esc(item)}</div>`).join('')}
 <div class="grid">
-<section class="card"><h2>运行状态</h2><div class="hint">当前 platform：<strong>${esc(platformLabel(platform))}</strong><br>最近 upstream：<strong>${esc(upstreamLabel(trace?.status))}</strong><br>最近记录时间：${esc(time(trace?.at))}<br>最近类型 / 池：${esc(trace?.type || '-')} / ${esc(trace?.pool || '-')}</div><table><thead><tr><th>进程</th><th>状态</th><th>内存</th><th>操作</th></tr></thead><tbody>${procs.length ? procs.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.pm2_env?.status || '-')}</td><td>${Math.round((item.monit?.memory || 0) / 1024 / 1024)} MB</td><td><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="${esc(item.name)}"><input type="hidden" name="action" value="restart"><button type="submit">重启</button></form></td></tr>`).join('') : '<tr><td colspan="4">未读取到 PM2 进程信息，请确认 Linux 服务器上 `pm2` 在 PATH 中可用。</td></tr>'}</tbody></table><div class="actions"><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="meting-api"><input type="hidden" name="action" value="restart-update"><button class="ghost" type="submit">重载 Meting 环境</button></form><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="kugou-upstream"><input type="hidden" name="action" value="restart-update"><button class="ghost" type="submit">重载 Upstream 环境</button></form></div></section>
-<section class="card"><h2>当前平台与 Cookie 来源</h2><table><thead><tr><th>池</th><th>实际来源</th><th>生效标识</th><th>文件池</th><th>文件路径</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(sourceLabel(item.sourceInfo.source))}</td><td>${esc(item.sourceInfo.activeKey || '-')}</td><td>${item.fileConfigured ? '已写入' : '空'}</td><td>${esc(item.filePath || '-')}</td></tr>`).join('')}</tbody></table>${pools.flatMap(item => item.warnings.map(message => `<div class="warn" style="margin-top:10px">${esc(item.label)}：${esc(message)}</div>`)).join('')}</section>
-<section class="card full"><h2>账号信息</h2><table><thead><tr><th>池</th><th>User ID</th><th>昵称</th><th>VIP 类型</th><th>到期时间</th><th>最近 refresh</th><th>最近 claim</th><th>最近错误</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(item.userId || '-')}</td><td>${esc(item.nickname || '-')}</td><td>${esc(item.vipType || '-')}</td><td>${esc(item.expireTime || '-')}</td><td>${esc(resultText(item.state?.lastRefreshResult))}</td><td>${esc(resultText(item.state?.lastClaimResult))}</td><td>${esc(item.state?.lastError?.message || '-')}</td></tr>`).join('')}</tbody></table><div class="mini" style="margin-top:10px">${pools.map(item => `<div class="subcard"><strong>${esc(item.label)}</strong><div>Token：${esc(item.token || '-')}</div><div>DFID：${esc(item.dfid || '-')}</div><div>MID：${esc(item.mid || '-')}</div><div>最近资料同步：${esc(time(item.state?.lastProfileAt))}</div></div>`).join('')}</div></section>
-<section class="card"><h2>二维码登录 / 短信登录</h2><div class="hint">二维码和短信状态已落盘到 <code>${esc(getKugouAdminStatePath())}</code>，进程重启后不会直接丢。</div><h3>二维码登录</h3><div class="actions"><form method="post" action="${root(basePath)}/kugou/qr/start"><button type="submit">生成二维码</button></form><form method="post" action="${root(basePath)}/kugou/qr/check"><button class="ghost" type="submit">检查扫码状态</button></form></div>${qr ? `<div style="margin-top:10px"><div class="hint">${esc(qrLabel(qr.status))}<br>过期时间：${esc(time(qr.expiresAt))}</div>${qr.base64 ? `<img class="qr" src="${esc(qr.base64)}" alt="qr">` : ''}<form method="post" action="${root(basePath)}/kugou/qr/apply" style="margin-top:10px"><label>写入到</label><select name="pool"><option value="premium">专业池</option><option value="general">普通池</option></select><button type="submit" style="margin-top:10px">写入登录态</button></form></div>` : '<div class="muted">当前没有待使用的二维码会话。</div>'}<h3 style="margin-top:14px">短信登录</h3><form method="post" action="${root(basePath)}/kugou/captcha/send"><label>手机号</label><input name="mobile" placeholder="输入手机号" value="${esc(sms?.mobile || '')}"><button class="ghost" type="submit" style="margin-top:10px">发送验证码</button></form><form method="post" action="${root(basePath)}/kugou/captcha/login" style="margin-top:10px"><label>验证码</label><input name="code" placeholder="输入短信验证码"><label style="display:block;margin-top:10px">写入到</label><select name="pool"><option value="premium">专业池</option><option value="general">普通池</option></select><button type="submit" style="margin-top:10px">验证码登录并写入</button></form></section>
-<section class="card"><h2>登录态刷新</h2><div class="hint">打开页面时会按懒刷新策略自动 refresh；这里只保留手动刷新按钮。</div><div class="actions"><form method="post" action="${root(basePath)}/kugou/refresh"><input type="hidden" name="pool" value="premium"><button type="submit">刷新专业池</button></form><form method="post" action="${root(basePath)}/kugou/refresh"><input type="hidden" name="pool" value="general"><button class="ghost" type="submit">刷新普通池</button></form></div><table style="margin-top:10px"><thead><tr><th>池</th><th>上次 refresh</th><th>结果</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(time(item.state?.lastRefreshAt))}</td><td>${esc(resultText(item.state?.lastRefreshResult))}</td></tr>`).join('')}</tbody></table></section>
-<section class="card full"><h2>领取概念版会员</h2><div class="hint">这里只做“一键领取 + 懒刷新登录态”。手动接口触发时，在 URL 后面加 <code>?format=json</code> 可直接拿 JSON。</div><div class="actions"><form method="post" action="${root(basePath)}/kugou/vip/claim"><input type="hidden" name="pool" value="premium"><button type="submit">领取专业池 Lite VIP</button></form><form method="post" action="${root(basePath)}/kugou/vip/claim"><input type="hidden" name="pool" value="general"><button class="ghost" type="submit">领取普通池 Lite VIP</button></form><form method="post" action="${root(basePath)}/kugou/vip/claim-all"><button class="danger" type="submit">两个池都执行</button></form></div><table style="margin-top:10px"><thead><tr><th>池</th><th>上次 claim</th><th>结果</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(time(item.state?.lastClaimAt))}</td><td>${esc(resultText(item.state?.lastClaimResult))}</td></tr>`).join('')}</tbody></table></section>
-<section class="card"><h2>池文件操作</h2><div class="hint">这里只影响文件池，不会自动清理环境变量覆盖。</div><div class="actions"><form method="post" action="${root(basePath)}/pool/clear"><input type="hidden" name="pool" value="premium"><button class="danger" type="submit">清空专业池</button></form><form method="post" action="${root(basePath)}/pool/clear"><input type="hidden" name="pool" value="general"><button class="danger" type="submit">清空普通池</button></form></div><form method="post" action="${root(basePath)}/pool/copy" style="margin-top:10px"><label>复制</label><div class="actions"><select name="fromPool"><option value="premium">专业池</option><option value="general">普通池</option></select><select name="toPool"><option value="general">普通池</option><option value="premium">专业池</option></select><button type="submit">复制</button></div></form><form method="post" action="${root(basePath)}/pool/move" style="margin-top:10px"><label>迁移</label><div class="actions"><select name="fromPool"><option value="premium">专业池</option><option value="general">普通池</option></select><select name="toPool"><option value="general">普通池</option><option value="premium">专业池</option></select><button class="ghost" type="submit">迁移</button></div></form></section>
-<section class="card"><h2>监控概览</h2><div class="hint">最近检查：${esc(time(mon?.checkedAt))}<br>缓存 TTL：${esc(String(mon?.ttlSeconds || 0))} 秒<br>本分钟剩余额度：${esc(String(mon?.summary?.remainingMinute ?? 0))}</div><div class="mini">${[{ key: 'pro', title: '专业池' }, { key: 'normal', title: '普通池' }, { key: 'internal', title: '游客池' }].map(({ key, title }) => { const d = mon?.pools?.[key] || {}; const g = d.diagnostics || {}; return `<div class="subcard"><strong>${esc(title)}</strong><div>状态：${esc(d.label || '-')}</div><div>说明：${esc(d.detail || '-')}</div><div>最近请求：${esc(time(d.lastRequestAt))}</div><div>基础探活：${esc(g.basicProbe || '-')}</div><div>VIP 能力：${esc(g.vipState || '-')}</div></div>` }).join('')}</div></section>
+<section class="card"><h2>运行状态</h2><div class="hint">当前平台标识：<strong>${esc(platformDisplayLabel(platform))}</strong><br>最近 upstream：<strong>${esc(upstreamLabel(trace?.status))}</strong><br>最近记录时间：${esc(time(trace?.at))}<br>最近类型 / 池：${esc(trace?.type || '-')} / ${esc(trace?.pool || '-')}</div><div class="table-wrap"><table><thead><tr><th>进程</th><th>状态</th><th>内存</th><th>操作</th></tr></thead><tbody>${procs.length ? procs.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.pm2_env?.status || '-')}</td><td>${Math.round((item.monit?.memory || 0) / 1024 / 1024)} MB</td><td><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="${esc(item.name)}"><input type="hidden" name="action" value="restart"><button type="submit">重启</button></form></td></tr>`).join('') : '<tr><td colspan="4">未读取到 PM2 进程信息，请确认 Linux 服务器上 <code>pm2</code> 在 PATH 中可用。</td></tr>'}</tbody></table></div><div class="actions"><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="meting-api"><input type="hidden" name="action" value="restart-update"><button class="ghost" type="submit">重载 API 环境</button></form><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="kugou-upstream"><input type="hidden" name="action" value="restart-update"><button class="ghost" type="submit">重载 Upstream 环境</button></form></div></section>
+<section class="card"><h2>平台与配置来源</h2><div class="table-wrap"><table><thead><tr><th>池</th><th>实际来源</th><th>生效标识</th><th>文件池状态</th><th>文件路径</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(sourceLabel(item.sourceInfo.source))}</td><td>${esc(item.sourceInfo.activeKey || '-')}</td><td>${item.fileConfigured ? '已写入' : '空'}</td><td><code>${esc(item.filePath || '-')}</code></td></tr>`).join('')}</tbody></table></div>${pools.flatMap(item => item.warnings.map(message => `<div class="warn" style="margin-top:16px">${esc(item.label)}：${esc(message)}</div>`)).join('')}</section>
+<section class="card full"><h2>账号信息</h2><div class="table-wrap"><table><thead><tr><th>账号池</th><th>用户 ID</th><th>昵称</th><th>VIP 类型</th><th>到期时间</th><th>最近刷新</th><th>最近领取</th><th>最近错误</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(item.userId || '-')}</td><td>${esc(item.nickname || '-')}</td><td>${esc(item.vipType || '-')}</td><td>${esc(item.expireTime || '-')}</td><td>${esc(resultText(item.state?.lastRefreshResult))}</td><td>${esc(resultText(item.state?.lastClaimResult))}</td><td>${esc(item.state?.lastError?.message || '-')}</td></tr>`).join('')}</tbody></table></div><div class="mini" style="margin-top:16px">${pools.map(item => `<div class="subcard"><strong>${esc(item.label)}</strong><div>Token: ${esc(item.token || '-')}</div><div>DFID: ${esc(item.dfid || '-')}</div><div>MID: ${esc(item.mid || '-')}</div><div>资料同步: ${esc(time(item.state?.lastProfileAt))}</div></div>`).join('')}</div></section>
+<section class="card"><h2>授权登录接入</h2><div class="hint">二维码和短信状态存储于 <code>${esc(getKugouAdminStatePath())}</code>，持久化保存。</div><h3>二维码登录</h3><div class="actions"><form method="post" action="${root(basePath)}/kugou/qr/start"><button type="submit">生成二维码</button></form><form method="post" action="${root(basePath)}/kugou/qr/check"><button class="ghost" type="submit">检查状态</button></form></div>${qr ? `<div style="margin-top:16px"><div class="hint">${esc(qrLabel(qr.status))}<br>过期时间：${esc(time(qr.expiresAt))}</div>${qr.base64 ? `<img class="qr" src="${esc(qr.base64)}" alt="qr">` : ''}<form method="post" action="${root(basePath)}/kugou/qr/apply" style="margin-top:16px"><label>目标账号池</label><select name="pool"><option value="premium">专业池</option><option value="general">普通池</option></select><button type="submit" style="margin-top:12px">写入会话配置</button></form></div>` : '<div class="muted" style="margin-top:16px">当前没有待使用的二维码会话。</div>'}<h3>短信验证登录</h3><form method="post" action="${root(basePath)}/kugou/captcha/send"><label>手机号码</label><input name="mobile" placeholder="请输入手机号" value="${esc(sms?.mobile || '')}"><button class="ghost" type="submit" style="margin-top:8px">获取验证码</button></form><form method="post" action="${root(basePath)}/kugou/captcha/login" style="margin-top:16px"><label>短信验证码</label><input name="code" placeholder="输入 6 位验证码"><label>目标账号池</label><select name="pool"><option value="premium">专业池</option><option value="general">普通池</option></select><button type="submit" style="margin-top:12px">登录并写入配置</button></form></section>
+<section class="card"><h2>并发会话控制</h2><div class="hint">常规请求已包含防过期懒刷新机制，此处仅提供强制手动刷新。</div><div class="actions"><form method="post" action="${root(basePath)}/kugou/refresh"><input type="hidden" name="pool" value="premium"><button type="submit">刷新专业池</button></form><form method="post" action="${root(basePath)}/kugou/refresh"><input type="hidden" name="pool" value="general"><button class="ghost" type="submit">刷新普通池</button></form></div><div class="table-wrap"><table><thead><tr><th>池分区</th><th>上次执行</th><th>执行结果</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(time(item.state?.lastRefreshAt))}</td><td>${esc(resultText(item.state?.lastRefreshResult))}</td></tr>`).join('')}</tbody></table></div></section>
+<section class="card full"><h2>会员特权调度</h2><div class="hint">${esc(claimHint)}<br>可附加 <code>?format=json</code> 直接获取 API 响应。</div>${liteActive ? '' : '<div class="warn" style="margin-top:16px">当前仍是普通版运行模式，Lite 领取按钮已保留但不会执行。</div>'}<div class="actions"><form method="post" action="${root(basePath)}/kugou/vip/claim"><input type="hidden" name="pool" value="premium"><button type="submit"${claimDisabled}>领取专业池 Lite 会员</button></form><form method="post" action="${root(basePath)}/kugou/vip/claim"><input type="hidden" name="pool" value="general"><button class="ghost" type="submit"${claimDisabled}>领取普通池 Lite 会员</button></form><form method="post" action="${root(basePath)}/kugou/vip/claim-all"><button class="danger" type="submit"${claimDisabled}>批量执行</button></form></div><div class="table-wrap"><table><thead><tr><th>池分区</th><th>上次下发</th><th>执行结果</th></tr></thead><tbody>${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(time(item.state?.lastClaimAt))}</td><td>${esc(resultText(item.state?.lastClaimResult))}</td></tr>`).join('')}</tbody></table></div></section>
+<section class="card"><h2>文件配置管理</h2><div class="hint">以下操作仅影响本地文件池配置，不覆盖环境变量等高优配置。</div><div class="actions"><form method="post" action="${root(basePath)}/pool/clear"><input type="hidden" name="pool" value="premium"><button class="danger" type="submit">清除专业池文件</button></form><form method="post" action="${root(basePath)}/pool/clear"><input type="hidden" name="pool" value="general"><button class="danger" type="submit">清除普通池文件</button></form></div><form method="post" action="${root(basePath)}/pool/copy" style="margin-top:24px"><label>跨区复制配置</label><div class="actions" style="flex-wrap:nowrap"><select name="fromPool" style="flex:1;"><option value="premium">从专业池</option><option value="general">从普通池</option></select><select name="toPool" style="flex:1;"><option value="general">到普通池</option><option value="premium">到专业池</option></select><button type="submit">执行复制</button></div></form><form method="post" action="${root(basePath)}/pool/move" style="margin-top:24px"><label>跨区迁移配置</label><div class="actions" style="flex-wrap:nowrap"><select name="fromPool" style="flex:1;"><option value="premium">从专业池</option><option value="general">从普通池</option></select><select name="toPool" style="flex:1;"><option value="general">到普通池</option><option value="premium">到专业池</option></select><button class="ghost" type="submit">执行迁移</button></div></form></section>
+<section class="card"><h2>监控健康度概览</h2><div class="hint">最新探测点：${esc(time(mon?.checkedAt))}<br>缓存生存期：${esc(String(mon?.ttlSeconds || 0))} 秒<br>分级限流余量：${esc(String(mon?.summary?.remainingMinute ?? 0))}</div><div class="mini" style="margin-top:16px">${[{ key: 'pro', title: '专业节点' }, { key: 'normal', title: '普通节点' }, { key: 'internal', title: '内部访客节点' }].map(({ key, title }) => { const d = mon?.pools?.[key] || {}; const g = d.diagnostics || {}; return `<div class="subcard"><strong>${esc(title)}</strong><div>状态分级：${esc(d.label || '-')}</div><div>详情溯源：${esc(d.detail || '-')}</div><div>交互时间：${esc(time(d.lastRequestAt))}</div><div>底层探活：${esc(g.basicProbe || '-')}</div><div>增值验证：${esc(g.vipState || '-')}</div></div>` }).join('')}</div></section>
 ${renderMonitorRefreshSection(basePath, mon)}
 ${renderRequestLogsSection(logs)}
-<section class="card full"><h2>调试信息</h2><details><summary class="muted">展开查看原始状态</summary><div class="mini" style="margin-top:10px"><div><h3>最近 upstream</h3><pre>${esc(JSON.stringify(trace || null, null, 2))}</pre></div><div><h3>Cookie 池视图</h3><pre>${esc(JSON.stringify(pools, null, 2))}</pre></div><div><h3>监控 JSON</h3><pre>${esc(JSON.stringify(mon, null, 2))}</pre></div><div><h3>状态文件路径</h3><pre>${esc(getKugouAdminStatePath())}</pre></div></div></details></section>
+<section class="card full"><h2>开发者调试</h2><details><summary>展开查看运行时状态数据</summary><div class="mini" style="margin-top:16px"><div><h3>上游链路</h3><pre>${esc(JSON.stringify(trace || null, null, 2))}</pre></div><div><h3>账号池拓扑</h3><pre>${esc(JSON.stringify(pools, null, 2))}</pre></div><div><h3>监控快照</h3><pre>${esc(JSON.stringify(mon, null, 2))}</pre></div><div><h3>状态持久化路径</h3><pre>${esc(getKugouAdminStatePath())}</pre></div></div></details></section>
 </div></div></body></html>`
+}
 
-const loginPage = ({ message = '', basePath = '/music' }) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Meting 管理页登录</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5efe6;font:14px/1.6 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif} .card{width:min(420px,92vw);background:#fffaf5;border:1px solid #dcc8b0;border-radius:20px;padding:28px;box-shadow:0 18px 40px rgba(0,0,0,.1)} input{width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid #dcc8b0;border-radius:12px;margin:12px 0 16px} button{width:100%;padding:12px 14px;border:0;border-radius:12px;background:#245c51;color:#fff;font-weight:700} .msg{padding:12px 14px;border-radius:12px;background:#f9e8df;color:#8a3f1b;margin-bottom:12px}</style></head><body><form class="card" method="post" action="${loginPath(basePath)}"><h1>Meting 管理页</h1><p>输入后台密码后进入 Kugou 管理页面。</p>${message ? `<div class="msg">${esc(message)}</div>` : ''}<input type="password" name="password" placeholder="后台密码"><button type="submit">登录</button><p>公开监控页：<code>${esc(`${basePath}/manage/monitor`)}</code></p></form></body></html>`
+const loginPage = ({ message = '', basePath = '/music' }) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>系统登录 - Meting</title><style>${loginStyle}</style></head><body><form class="card" method="post" action="${loginPath(basePath)}"><h1>系统访问验证</h1><p style="margin-bottom:24px;">验证您的管理员凭据以进入控制台。</p>${message ? `<div class="msg">${esc(message)}</div>` : ''}<label>安全密码</label><input type="password" name="password" placeholder="请输入您的密码"><button type="submit">登录系统</button><p>公开状态矩阵：<a href="${esc(`${basePath}/manage/monitor`)}" style="color:var(--primary);text-decoration:none;font-weight:500;">/manage/monitor</a></p></form></body></html>`
 
-const publicPage = ({ basePath, mon, platform, trace }) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Meting 公开监控</title><style>body{margin:0;background:#f5efe6;font:14px/1.6 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#261d15}.wrap{max-width:980px;margin:0 auto;padding:24px}.card{background:#fffaf5;border:1px solid #dcc8b0;border-radius:18px;padding:18px}.btn{display:inline-block;padding:10px 14px;border-radius:12px;background:#245c51;color:#fff;text-decoration:none}.hint{padding:12px 14px;border-radius:12px;background:#f5ece0;color:#6e5d4c;margin-bottom:12px}</style></head><body><div class="wrap"><div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:16px"><div><h1>Meting 公开监控</h1><div class="hint">当前 platform：${esc(platformLabel(platform))}<br>最近 upstream：${esc(upstreamLabel(trace?.status))}<br>最近记录时间：${esc(time(trace?.at))}</div></div><a class="btn" href="${loginPath(basePath)}">管理员登录</a></div><div class="card"><pre>${esc(JSON.stringify(mon, null, 2))}</pre></div></div></body></html>`
+const publicPage = ({ basePath, mon, platform, trace }) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Meting 公共状态展示</title><style>${publicStyle}</style></head><body><div class="wrap"><div class="header-row"><div><h1>网络与服务状态矩阵</h1><div class="hint" style="margin:0;">运行平台：<strong>${esc(platformDisplayLabel(platform))}</strong><br>上游链路网关：<strong>${esc(upstreamLabel(trace?.status))}</strong><br>最后更新：${esc(time(trace?.at))}</div></div><a class="btn" href="${loginPath(basePath)}">进入管理控制台</a></div><div class="card"><pre>${esc(JSON.stringify(mon, null, 2))}</pre></div></div></body></html>`
 
 export default async (c) => {
   const basePath = getBasePath(c)
@@ -298,11 +418,20 @@ export default async (c) => {
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/vip/claim')) {
-    const form = await getForm(c); const result = await claimKugouLiteVip(form.pool || 'premium', { trigger: 'manual' })
+    const form = await getForm(c)
+    const platform = await upstreamPlatform()
+    if (platformLabel(platform) !== 'lite') {
+      return respond(c, basePath, { ok: false, platform, message: 'Lite 功能已保留在仓库里，但当前 upstream 仍处于 default (regular) 模式。' }, '当前 upstream 仍是 default (regular) 模式，Lite 领取未启用')
+    }
+    const result = await claimKugouLiteVip(form.pool || 'premium', { trigger: 'manual' })
     return respond(c, basePath, result, result.message)
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/vip/claim-all')) {
+    const platform = await upstreamPlatform()
+    if (platformLabel(platform) !== 'lite') {
+      return respond(c, basePath, { ok: false, platform, message: 'Lite 功能已保留在仓库里，但当前 upstream 仍处于 default (regular) 模式。' }, '当前 upstream 仍是 default (regular) 模式，Lite 批量领取未启用')
+    }
     const result = await claimAllKugouLiteVip({ trigger: 'manual' })
     return respond(c, basePath, result, result.message)
   }
@@ -342,7 +471,6 @@ export default async (c) => {
   const trace = getKugouUpstreamTrace()
   const warnings = []
   if (!hasKugouUpstreamAuth()) warnings.push('当前没有配置 METING_KUGOU_UPSTREAM_URL，Kugou 管理动作和概念版领取都不会生效。')
-  if (platformLabel(platform) !== 'lite') warnings.push('KuGouMusicApi/.env 中的 platform 不是 lite。即使页面显示有登录态，也不代表运行时正在走概念版链路。')
   if (platformLabel(platform) === 'lite' && pools.some(item => item.sourceInfo.source === 'env')) warnings.push('虽然 platform=lite，但当前运行时仍优先吃环境变量 Cookie；后台写入的文件池不会立刻接管请求。')
   return c.html(page({ flash, basePath, procs, pools, mon, qr, sms, platform, trace, warnings, logs }))
 }

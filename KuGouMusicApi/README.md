@@ -152,3 +152,29 @@ PORT=3100 npm run dev
 - `module/youth_listen_song.js`
 - `module/youth_vip.js`
 
+## Platform Switch Quick Reference
+
+Regular mode keeps the upstream aligned with the normal Kugou client flow:
+
+```bash
+platform=
+PORT=3100
+HOST=127.0.0.1
+```
+
+Lite mode can be prepared in the repo without enabling it right now:
+
+```bash
+platform=lite
+PORT=3100
+HOST=127.0.0.1
+```
+
+Important:
+
+- `platform=` means regular/default mode.
+- `platform=lite` means concept/lite mode.
+- Do not use `platform=''`.
+- After switching modes, restart the upstream with `pm2 restart kugou-upstream --update-env`.
+- Re-login or refresh the related Kugou pool after a mode switch.
+- Example files are included as `.env.default.example` and `.env.lite.example`.
