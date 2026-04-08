@@ -1,6 +1,7 @@
 node_modules/
 .env
 cookie/
+data/
 *.log
 test-v5-url.js
 admin-cookie.txt

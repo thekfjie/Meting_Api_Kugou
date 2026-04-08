@@ -6,9 +6,15 @@ import { getKugouSonginfo, parseKugouCookie } from './kugou-songinfo.js'
 import { getKugouUpstreamData, hasKugouUpstream } from './kugou-upstream.js'
 
 let cachedStatus = null
-let cachedAt = 0
+
+const STATUS_TTL_BASE_MS = 5 * 60 * 1000
+const STATUS_TTL_JITTER_MS = 60 * 1000
 
 const nowIso = () => new Date().toISOString()
+const randomStatusTtlMs = () => {
+  const offset = Math.floor(Math.random() * (STATUS_TTL_JITTER_MS * 2 + 1)) - STATUS_TTL_JITTER_MS
+  return STATUS_TTL_BASE_MS + offset
+}
 
 const getPlayableUrl = (data) => data?.play_url || data?.play_backup_url || ''
 
@@ -358,16 +364,19 @@ const probeCookiePool = async (pool) => {
   }
 }
 
-const buildStatusPayload = ({ checkedAt, ttl, premium, general, internal }) => {
+const buildStatusPayload = ({ checkedAt, ttl, expiresAt, premium, general, internal }) => {
   const runtime = getKugouRuntimeSnapshot()
   const premiumMaxPerMinute = config.meting.kugou.status.maxRpm.premium || 0
   const generalMaxPerMinute = config.meting.kugou.status.maxRpm.general || 0
   const premiumRemaining = Math.max(0, premiumMaxPerMinute - (runtime.perMinute?.premium || 0))
   const generalRemaining = Math.max(0, generalMaxPerMinute - (runtime.perMinute?.general || 0))
+  const cacheRemainingMs = expiresAt ? Math.max(0, expiresAt - Date.now()) : 0
 
   return {
     checkedAt,
     ttlSeconds: Math.floor(ttl / 1000),
+    nextCheckAt: expiresAt ? new Date(expiresAt).toISOString() : '',
+    cacheRemainingSeconds: Math.floor(cacheRemainingMs / 1000),
     auth: {
       premiumKeyConfigured: Boolean(config.meting.kugou.premiumKey),
       premiumByReferrerAllowed: config.meting.cookie.allowHosts.length > 0,
@@ -390,13 +399,13 @@ const buildStatusPayload = ({ checkedAt, ttl, premium, general, internal }) => {
 }
 
 export async function getKugouAccountStatus (force = false) {
-  const ttl = config.meting.kugou.status.ttlMs
   const now = Date.now()
 
-  if (!force && cachedStatus && now - cachedAt < ttl) {
+  if (!force && cachedStatus && now < (cachedStatus.expiresAt || 0)) {
     return buildStatusPayload({
       checkedAt: cachedStatus.checkedAt,
-      ttl,
+      ttl: cachedStatus.ttlMs,
+      expiresAt: cachedStatus.expiresAt,
       premium: cachedStatus.accounts.premium,
       general: cachedStatus.accounts.general,
       internal: cachedStatus.accounts.internal
@@ -408,20 +417,23 @@ export async function getKugouAccountStatus (force = false) {
     probeCookiePool('general'),
     buildInternalStatus()
   ])
+  const ttl = randomStatusTtlMs()
 
   cachedStatus = {
     checkedAt: nowIso(),
+    ttlMs: ttl,
+    expiresAt: now + ttl,
     accounts: {
       premium,
       general,
       internal
     }
   }
-  cachedAt = now
 
   return buildStatusPayload({
     checkedAt: cachedStatus.checkedAt,
     ttl,
+    expiresAt: cachedStatus.expiresAt,
     premium,
     general,
     internal

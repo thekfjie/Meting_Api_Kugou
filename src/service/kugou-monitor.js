@@ -221,6 +221,8 @@ export default async (c) => {
   return c.json({
     checkedAt: data.checkedAt,
     ttlSeconds: data.ttlSeconds,
+    nextCheckAt: data.nextCheckAt,
+    cacheRemainingSeconds: data.cacheRemainingSeconds,
     summary: {
       currentMinute: data.traffic?.perMinute?.total || 0,
       remainingMinute: data.traffic?.remainingPerMinute?.total || 0,

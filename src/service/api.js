@@ -14,6 +14,8 @@ import {
   extractKugouHashFromResourceId,
   getKugouUpstreamData
 } from '../utils/kugou-upstream.js'
+import { recordKugouUpstreamTrace } from '../utils/kugou-upstream-status.js'
+import { recordRequestSummary } from '../utils/request-summary-log.js'
 import {
   canUseKugouSharePlaylist,
   getKugouPlaylistFromShare,
@@ -43,8 +45,61 @@ const METING_METHODS = {
 }
 const BLOG_PLAYLIST_SOURCE = 'blog-playlist'
 
+const summarizeAuthors = (item) => {
+  if (typeof item?.author === 'string' && item.author) return item.author
+  if (Array.isArray(item?.artist)) return item.artist.join(' / ')
+  if (Array.isArray(item?.authors)) {
+    return item.authors
+      .map(author => author?.author_name || author?.name || '')
+      .filter(Boolean)
+      .join(' / ')
+  }
+  if (typeof item?.singerName === 'string' && item.singerName) return item.singerName
+  return ''
+}
+
+const summarizeTitle = (item) => {
+  return item?.title || item?.name || item?.songName || item?.song_name || item?.hash || ''
+}
+
+const summarizeItems = (data, limit = 3) => {
+  const list = Array.isArray(data) ? data : (data && typeof data === 'object' ? [data] : [])
+  return list
+    .map(item => {
+      const title = summarizeTitle(item)
+      const author = summarizeAuthors(item)
+      return author && title ? `${author} - ${title}` : (title || author)
+    })
+    .filter(Boolean)
+    .slice(0, limit)
+}
+
+const recordApiSummary = ({ c, server, type, id, pool, cacheHit, upstreamStatus, data }) => {
+  const referer = c.req.header('referer') || ''
+  const items = summarizeItems(data)
+  if (!items.length) {
+    if (type === 'url') items.push(`url:${id}`)
+    else if (type === 'pic') items.push(`pic:${id}`)
+    else if (type === 'lrc') items.push(`lrc:${id}`)
+  }
+
+  recordRequestSummary({
+    at: new Date().toISOString(),
+    path: c.req.path,
+    server,
+    type,
+    id,
+    requestId: c.get('requestId') || '',
+    pool: server === 'kugou' ? pool : '',
+    cache: cacheHit ? 'hit' : 'miss',
+    upstream: server === 'kugou' ? upstreamStatus : '',
+    referer,
+    items
+  }).catch(() => {})
+}
+
 export default async (c) => {
-  c.header('access-control-expose-headers', 'x-cache, x-kugou-route, x-kugou-notice')
+  c.header('access-control-expose-headers', 'x-cache, x-kugou-route, x-kugou-notice, x-kugou-upstream')
 
   const query = c.req.query()
   const server = query.server || 'netease'
@@ -92,8 +147,11 @@ export default async (c) => {
   }
 
   let cacheKey = buildCacheKey(effectiveKugouPool)
-  let data = cache.get(cacheKey)
-  let cacheHit = data !== undefined
+  let cacheEntry = cache.get(cacheKey)
+  let data = cacheEntry?.__metingCache ? cacheEntry.payload : cacheEntry
+  let cacheHit = cacheEntry !== undefined
+  let upstreamStatus = cacheEntry?.__metingCache ? (cacheEntry.upstreamStatus || 'miss') : 'miss'
+  let upstreamAttempted = false
   const kugouHashId = server === 'kugou'
     ? extractKugouHashFromResourceId(id)
     : id
@@ -136,8 +194,10 @@ export default async (c) => {
             c.header('x-kugou-route', 'internal-fallback')
             c.header('x-kugou-notice', encodeURIComponent(fallbackNotice))
             cacheKey = buildCacheKey(effectiveKugouPool)
-            data = cache.get(cacheKey)
-            cacheHit = data !== undefined
+            cacheEntry = cache.get(cacheKey)
+            data = cacheEntry?.__metingCache ? cacheEntry.payload : cacheEntry
+            cacheHit = cacheEntry !== undefined
+            upstreamStatus = cacheEntry?.__metingCache ? (cacheEntry.upstreamStatus || 'miss') : 'miss'
           } else {
             c.header('x-cache', 'miss')
             throw new HTTPException(429, {
@@ -169,6 +229,7 @@ export default async (c) => {
     if (cookie) meting.cookie(cookie)
 
     if (server === 'kugou' && effectiveKugouPool !== 'internal' && !isKugouSharePlaylist) {
+      upstreamAttempted = true
       const upstreamData = await getKugouUpstreamData({
         type,
         id,
@@ -176,6 +237,9 @@ export default async (c) => {
       })
       if (upstreamData != null) {
         data = upstreamData
+        upstreamStatus = 'hit'
+      } else {
+        upstreamStatus = 'fallback-meting'
       }
     }
 
@@ -224,7 +288,11 @@ export default async (c) => {
         }
       }
     }
-    cache.set(cacheKey, data, {
+    cache.set(cacheKey, {
+      __metingCache: true,
+      payload: data,
+      upstreamStatus
+    }, {
       ttl: isKugouSharePlaylist
         ? 1000 * 60 * 30
         : (type === 'url' ? 1000 * 60 * 10 : 1000 * 60 * 60)
@@ -236,7 +304,32 @@ export default async (c) => {
     c.header('x-kugou-notice', encodeURIComponent(fallbackNotice))
   }
 
+  if (server === 'kugou') {
+    c.header('x-kugou-upstream', upstreamStatus)
+    recordKugouUpstreamTrace({
+      status: upstreamStatus,
+      type,
+      pool: effectiveKugouPool,
+      configured: Boolean(config.meting.kugou.upstream.url),
+      attempted: upstreamAttempted,
+      cacheHit,
+      reason: upstreamAttempted
+        ? (upstreamStatus === 'hit' ? 'upstream-hit' : 'fallback-after-upstream')
+        : 'not-attempted'
+    })
+  }
+
   if (type === 'url') {
+    recordApiSummary({
+      c,
+      server,
+      type,
+      id,
+      pool: effectiveKugouPool,
+      cacheHit,
+      upstreamStatus,
+      data
+    })
     let url = data.url
     if (!url) {
       return c.body(null, 404)
@@ -265,6 +358,16 @@ export default async (c) => {
   }
 
   if (type === 'pic') {
+    recordApiSummary({
+      c,
+      server,
+      type,
+      id,
+      pool: effectiveKugouPool,
+      cacheHit,
+      upstreamStatus,
+      data
+    })
     const url = data.url
     if (!url) {
       return c.body(null, 404)
@@ -273,6 +376,16 @@ export default async (c) => {
   }
 
   if (type === 'lrc') {
+    recordApiSummary({
+      c,
+      server,
+      type,
+      id,
+      pool: effectiveKugouPool,
+      cacheHit,
+      upstreamStatus,
+      data
+    })
     return c.text(lyricFormat(data.lyric, data.tlyric || ''))
   }
 
@@ -285,6 +398,16 @@ export default async (c) => {
 
   // 🛡️ 智能兼容防弹装甲 🛡️
   const safeData = Array.isArray(data) ? data : (data.error ? [] : [data])
+  recordApiSummary({
+    c,
+    server,
+    type,
+    id,
+    pool: effectiveKugouPool,
+    cacheHit,
+    upstreamStatus,
+    data: safeData
+  })
   return c.json(safeData.map(x => {
     // 兼容标准格式(name)与酷狗原始格式(songName)
     const title = x.title || x.name || x.songName || '未知歌曲'

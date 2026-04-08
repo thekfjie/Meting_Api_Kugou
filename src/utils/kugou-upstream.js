@@ -1,5 +1,5 @@
 import config from '../config.js'
-import { parseKugouCookie } from './kugou-songinfo.js'
+import { buildKugouUpstreamAuthCookie } from './kugou-upstream-auth.js'
 
 const DFID_TTL_MS = 1000 * 60 * 60 * 6
 
@@ -100,19 +100,7 @@ const requestUpstream = async (path, { query = {}, cookie = '' } = {}) => {
 }
 
 const buildAuthCookie = ({ cookie = '', dfid = '' } = {}) => {
-  const parsed = parseKugouCookie(cookie)
-  const parts = []
-
-  const normalizedDfid = normalizeText(dfid)
-  if (normalizedDfid) parts.push(`dfid=${normalizedDfid}`)
-
-  const token = normalizeText(parsed.t)
-  if (token) parts.push(`token=${token}`)
-
-  const userId = normalizeText(parsed.KugooID)
-  if (userId) parts.push(`userid=${userId}`)
-
-  return parts.join('; ')
+  return buildKugouUpstreamAuthCookie({ cookie, dfid })
 }
 
 const ensureUpstreamDfid = async () => {

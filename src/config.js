@@ -20,7 +20,8 @@ export default {
   admin: {
     password: process.env.ADMIN_PASSWORD || '',
     sessionSecret: process.env.ADMIN_SESSION_SECRET || process.env.METING_TOKEN || 'token',
-    sessionTtlMs: toNumber(process.env.ADMIN_SESSION_TTL_MS, 12 * 60 * 60 * 1000)
+    sessionTtlMs: toNumber(process.env.ADMIN_SESSION_TTL_MS, 12 * 60 * 60 * 1000),
+    kugouLazyRefreshMs: toNumber(process.env.METING_KUGOU_ADMIN_LAZY_REFRESH_MS, 6 * 60 * 60 * 1000)
   },
   https: {
     enabled: toBoolean(process.env.HTTPS_ENABLED),

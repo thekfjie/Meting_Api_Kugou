@@ -42,6 +42,19 @@ const getCookieSources = (server, pool = 'default') => {
   }
 }
 
+const readCookieFromFiles = async (fileNames = []) => {
+  for (const fileName of fileNames) {
+    try {
+      const cookiePath = resolve(process.cwd(), 'cookie', fileName)
+      const cookie = await readFile(cookiePath, 'utf-8')
+      const value = cookie.trim()
+      if (value) return value
+    } catch (error) {}
+  }
+
+  return ''
+}
+
 async function startWatcher () {
   try {
     watcher = watch(cookieDir)
@@ -86,19 +99,14 @@ export async function readCookieFile (server, pool = 'default') {
   }
 
   // 从文件读取
-  for (const fileName of fileNames) {
-    try {
-      const cookiePath = resolve(process.cwd(), 'cookie', fileName)
-      const cookie = await readFile(cookiePath, 'utf-8')
-      const value = cookie.trim()
+  const fileValue = await readCookieFromFiles(fileNames)
+  if (fileValue) {
+    cookieCache.set(cacheKey, {
+      value: fileValue,
+      timestamp: now
+    })
 
-      cookieCache.set(cacheKey, {
-        value,
-        timestamp: now
-      })
-
-      return value
-    } catch (error) {}
+    return fileValue
   }
 
   // 读取失败时也缓存空字符串，避免频繁读取不存在的文件
@@ -145,6 +153,11 @@ export async function inspectCookieSource (server, pool = 'default') {
     filePath: resolve(process.cwd(), 'cookie', fileNames[0] || server),
     fallbackOrder: [...envKeys, ...fileNames.map(name => `cookie/${name}`)]
   }
+}
+
+export async function readCookiePoolFile (server, pool = 'default') {
+  const { fileNames } = getCookieSources(server, pool)
+  return readCookieFromFiles(fileNames)
 }
 
 export function clearCookieCache () {

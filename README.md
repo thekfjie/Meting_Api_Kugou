@@ -1,523 +1,269 @@
-# Meting-API
+# Meting-API Integration Repo
 
-基于 Hono.js 的多平台音乐 API 代理服务,封装 [@meting/core](https://www.npmjs.com/package/@meting/core) 提供的统一音乐 API。
+这个仓库不是单一服务，而是一个整合仓库：
 
-## 特性
+- 根目录是 `Meting + Hono` 包装层，对外提供 `/api`、`/music`、`/music/manage`、`/monitor/kugou`。
+- `KuGouMusicApi/` 是酷狗 upstream，根层通过 `METING_KUGOU_UPSTREAM_URL` 把它当成 Kugou 的 HTTP upstream 使用。
+- 推荐部署方式是 PM2 同时拉起两个进程：`meting-api` 和 `kugou-upstream`。
 
-- 🎵 支持多个音乐平台:网易云、QQ音乐、酷狗、百度、酷我
-- 🚀 基于 Hono.js 高性能框架
-- 💾 内置 LRU 缓存机制,减少上游 API 调用
-- 🔐 HMAC-SHA1 令牌鉴权,保护敏感接口
-- 🔄 支持把 `KuGouMusicApi` 作为酷狗上游接入,保留 Meting 风格输出与 302 跳转语义
-- 🐳 Docker 部署支持
-- 📝 结构化 JSON 日志输出
+## 目录结构
 
-## 支持的平台
+```text
+Meting-API/
+├─ src/                     # 根层 Hono 服务
+│  ├─ service/api.js        # 对外 API 主入口
+│  ├─ service/admin.js      # 管理页与管理动作
+│  ├─ service/kugou-monitor.js
+│  └─ utils/
+│     ├─ kugou-upstream.js
+│     ├─ kugou-upstream-auth.js
+│     ├─ kugou-upstream-vip.js
+│     ├─ kugou-admin-actions.js
+│     └─ kugou-admin-state.js
+├─ KuGouMusicApi/           # 酷狗 upstream 子项目
+├─ ecosystem.config.cjs     # PM2 双进程配置
+├─ cookie/                  # Kugou 文件池，运行后自动生成
+└─ data/                    # 管理状态文件，运行后自动生成
+```
 
-| 平台 | server 参数 | 说明 |
-|------|------------|------|
-| 网易云音乐 | `netease` | - |
-| QQ音乐 | `tencent` | - |
-| 酷狗音乐 | `kugou` | - |
-| 百度音乐 | `baidu` | - |
-| 酷我音乐 | `kuwo` | - |
+## 这套集成现在怎么工作
+
+### 根层路由
+
+- `GET /api`
+- `GET /music`
+- `GET /api/monitor/kugou`
+- `GET /monitor/kugou`
+- `GET/POST /api/manage/*`
+- `GET/POST /music/manage/*`
+
+`/api` 和 `/music` 保持兼容，`type=url` / `type=pic` 仍然返回 `302`。
+
+### Kugou 请求链路
+
+根层会先按 `premium / general / internal` 三种池路由选择 Cookie。
+
+当满足以下条件时，会优先尝试 upstream：
+
+- `server=kugou`
+- 池不是 `internal`
+- 不是分享歌单特判
+- `type` 属于 `song / playlist / lrc / url / pic`
+
+命中 upstream 后，根层会把返回转换成 Meting 风格输出；拿不到数据时，才会回退到原本的 Meting 链路或其他兜底逻辑。
+
+### 调试头
+
+Kugou 请求现在会带上：
+
+- `x-kugou-upstream: hit`
+- `x-kugou-upstream: fallback-meting`
+- `x-kugou-upstream: miss`
+
+用途：
+
+- `hit`: 本次结果来自 upstream
+- `fallback-meting`: 尝试过 upstream，但失败后回退到非 upstream 链路
+- `miss`: 这次没有尝试 upstream，例如未配置 upstream、走了游客池、命中其他特判
 
 ## 快速开始
 
-### 一键部署
-
-|平台|链接|
-|---|---|
-|Koyeb|[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=meting-api&type=docker&image=ghcr.io%2Fmetowolf%2Fmeting-api%3Alatest&instance_type=free&regions=was&instances_min=0&autoscaling_sleep_idle_delay=300&env%5BMETING_URL%5D=https%3A%2F%2F%7B%7B+KOYEB_PUBLIC_DOMAIN+%7D%7D&ports=80%3Bhttp%3B%2F&hc_protocol%5B80%5D=tcp&hc_grace_period%5B80%5D=5&hc_interval%5B80%5D=30&hc_restart_limit%5B80%5D=3&hc_timeout%5B80%5D=5&hc_path%5B80%5D=%2F&hc_method%5B80%5D=get)|
-
-
-### 本地运行
+### 1. 安装依赖
 
 ```bash
-# 安装依赖
-yarn install
-
-# 配置环境变量(可选)
-cp .env.example .env
-# 编辑 .env 文件配置参数
-
-# 开发模式(热重载)
-yarn dev
-
-# 生产模式
-yarn start
+npm install
+cd KuGouMusicApi && npm install
 ```
 
-### PM2 部署
+### 2. 配置环境变量
 
-如果你希望把 `Meting-API` 和内置的 `KuGouMusicApi` 一起交给 PM2 托管,当前仓库已经内置 `KuGouMusicApi/` 子目录:
+根目录当前没有 `.env.example`，请直接创建 `Meting-API/.env`。
 
-```text
-E:/my_service/
-  └── Meting-API/
-      ├── KuGouMusicApi/
-      └── ecosystem.config.cjs
-```
-
-然后在 `Meting-API` 根目录执行:
+最少建议配置：
 
 ```bash
-pm2 start ecosystem.config.cjs
-pm2 save
-```
-
-该配置会同时启动:
-
-- `meting-api`: 当前服务
-- `kugou-upstream`: 指向仓库内置的 `KuGouMusicApi`
-
-如果服务器上之前只托管了 `meting-api`, 拉取更新后需要额外执行一次:
-
-```bash
-pm2 start ecosystem.config.cjs --only kugou-upstream
-pm2 save
-```
-
-如果你已经用反向代理把接口暴露为 `https://api.kfjie.me/music`, 推荐把管理页暴露为以下两条路径:
-
-- 未登录监控页: `https://api.kfjie.me/music/manage/monitor`
-- 登录入口: `https://api.kfjie.me/music/manage/login`
-
-两个服务各自读取自己目录内的 `.env` 文件,因此修改环境变量后需要执行:
-
-```bash
-pm2 restart meting-api --update-env
-pm2 restart kugou-upstream --update-env
-```
-
-### PM2 运维速查
-
-下面这几条命令最常用,可以直接按场景套用。
-
-**日常改 `.env` 或密钥后重启单个服务**
-
-```bash
-pm2 restart meting-api --update-env
-pm2 restart kugou-upstream --update-env
-```
-
-- 适用: 修改 `Meting-API/.env`、`KuGouMusicApi/.env`、管理页密码、token、upstream 地址、平台参数等
-- 说明: `--update-env` 会让 PM2 重新读取最新环境变量
-
-**改了 `ecosystem.config.cjs` 后整体重载**
-
-```bash
-pm2 restart ecosystem.config.cjs --update-env
-```
-
-- 适用: 修改 PM2 `cwd`、脚本路径、代理禁用变量、统一 env 等
-- 说明: 这条命令更适合“配置文件改动”,前提是两个 app 已经在 PM2 中注册过
-
-**第一次切到新结构,或 PM2 状态混乱时重建**
-
-```bash
-pm2 delete kugou-upstream
-pm2 delete meting-api
-pm2 start ecosystem.config.cjs
-pm2 save
-```
-
-- 适用: 从旧部署切到当前单仓库结构,或者 PM2 还记着旧路径/旧进程名/旧环境
-- 说明: 这是最干净的“重建进程定义”方式,会先删掉旧 app 再按当前配置创建
-
-**只给旧实例补起 `kugou-upstream`**
-
-```bash
-pm2 start ecosystem.config.cjs --only kugou-upstream
-pm2 save
-```
-
-- 适用: 服务器上原本只有 `meting-api`,更新后想补起新的 upstream 进程
-
-**查看状态与日志**
-
-```bash
-pm2 ls
-pm2 logs meting-api --lines 100 --nostream
-pm2 logs kugou-upstream --lines 100 --nostream
-```
-
-**查看当前 PM2 进程实际生效的环境变量**
-
-```bash
-pm2 env meting-api
-pm2 env kugou-upstream
-```
-
-- 排查重点: 是否仍带有旧的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`,以及 `METING_COOKIE_KUGOU*` 是否还在环境里覆盖文件池
-
-### Docker 部署
-
-```bash
-# 构建镜像
-docker build -t meting-api .
-
-# 运行容器
-docker run -d \
-  -p 80:80 \
-  -e METING_URL=https://your-domain.com \
-  -e METING_TOKEN=your-secret-token \
-  --name meting-api \
-  meting-api
-```
-
-使用 Docker Compose:
-
-```yaml
-version: '3.8'
-services:
-  meting-api:
-    image: ghcr.io/metowolf/meting-api:latest
-    ports:
-      - "80:80"
-    environment:
-      - METING_URL=https://your-domain.com
-      - METING_TOKEN=your-secret-token
-    restart: unless-stopped
-```
-
-## HTTPS 配置
-
-### 开发环境
-
-使用自签名证书进行本地调试:
-
-```bash
-mkdir -p certs
-openssl req -x509 -nodes -days 365 \
-  -newkey rsa:2048 \
-  -keyout certs/local.key \
-  -out certs/local.crt \
-  -subj "/CN=localhost"
-```
-
-在启动服务时配置:
-
-```bash
-HTTPS_ENABLED=true \
-SSL_KEY_PATH=certs/local.key \
-SSL_CERT_PATH=certs/local.crt \
-yarn start
-```
-
-### 生产环境
-
-推荐使用 [Let's Encrypt](https://letsencrypt.org/) 提供的免费证书,通过 [Certbot](https://certbot.eff.org/) 自动签发与续期。例如在 Nginx 部署的服务器上:
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot certonly --nginx -d your-domain.com
-```
-
-证书获取后,将 `fullchain.pem` 和 `privkey.pem` 文件路径配置到对应环境变量。
-
-### Docker HTTPS 部署示例
-
-```bash
-docker run -d \
-  -p 80:80 \
-  -p 443:443 \
-  -v /etc/letsencrypt/live/your-domain.com:/certs:ro \
-  -e HTTPS_ENABLED=true \
-  -e SSL_KEY_PATH=/certs/privkey.pem \
-  -e SSL_CERT_PATH=/certs/fullchain.pem \
-  -e METING_URL=https://your-domain.com \
-  --name meting-api \
-  meting-api
-```
-
-### 反向代理推荐
-
-生产环境可搭配 Nginx 或 Caddy 作为反向代理,实现自动证书管理和负载均衡:
-- [Nginx HTTPS 配置示例](https://docs.nginx.com/nginx/admin-guide/security-controls/terminating-ssl-http/)
-- [Caddy 自动 HTTPS 说明](https://caddyserver.com/docs/automatic-https)
-
-
-## 环境变量配置
-
-创建 `.env` 文件或通过环境变量传递:
-
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `HTTP_PREFIX` | HTTP 路由前缀 | `` (空) |
-| `HTTP_PORT` | HTTP 服务监听端口 | `80` |
-| `ADMIN_PASSWORD` | 后台管理页登录密码 | `` (空,禁用后台) |
-| `ADMIN_SESSION_SECRET` | 后台会话签名密钥 | `METING_TOKEN` |
-| `ADMIN_SESSION_TTL_MS` | 后台登录会话有效期 | `43200000` |
-| `HTTPS_ENABLED` | 是否启用 HTTPS 服务 | `false` |
-| `HTTPS_PORT` | HTTPS 服务监听端口 | `443` |
-| `SSL_KEY_PATH` | HTTPS 私钥文件路径 | - |
-| `SSL_CERT_PATH` | HTTPS 证书文件路径 | - |
-| `METING_URL` | API 服务的公网访问地址(用于生成回调 URL) | - |
-| `METING_TOKEN` | HMAC 签名密钥 | `token` |
-| `METING_KUGOU_PREMIUM_KEY` | 酷狗 Pro 池访问 Key,命中后可在额度内直连 Pro 池 | `` (空) |
-| `METING_KUGOU_UPSTREAM_URL` | 可选的酷狗 HTTP 上游地址,例如 `http://127.0.0.1:3100` | `` (空,关闭) |
-| `METING_COOKIE_ALLOW_HOSTS` | 允许使用 cookie 的 referrer 域名白名单(逗号分隔) | `` (空,不限制) |
-| `METING_COOKIE_NETEASE` | 网易云音乐 Cookie | - |
-| `METING_COOKIE_TENCENT` | QQ音乐 Cookie | - |
-| `METING_COOKIE_KUGOU` | 酷狗音乐 Cookie | - |
-| `METING_COOKIE_BAIDU` | 百度音乐 Cookie | - |
-| `METING_COOKIE_KUWO` | 酷我音乐 Cookie | - |
-
-## API 接口文档
-
-### 基础接口
-
-```
-GET /api
-```
-
-### 请求参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `server` | string | 是 | 音乐平台:`netease`/`tencent`/`kugou`/`baidu`/`kuwo` |
-| `type` | string | 是 | 操作类型:`search`/`song`/`album`/`artist`/`playlist`/`lrc`/`url`/`pic` |
-| `id` | string | 是 | 资源 ID |
-| `token` 或 `auth` | string | 条件 | 认证令牌(仅 `lrc`/`url`/`pic` 类型需要) |
-
-### 操作类型说明
-
-| type | 说明 | 需要鉴权 | 返回格式 |
-|------|------|----------|----------|
-| `search` | 搜索歌曲 | 否 | JSON 数组 |
-| `song` | 获取歌曲详情 | 否 | JSON 数组 |
-| `album` | 获取专辑 | 否 | JSON 数组 |
-| `artist` | 获取歌手 | 否 | JSON 数组 |
-| `playlist` | 获取歌单 | 否 | JSON 数组 |
-| `lrc` | 获取歌词 | 是 | 纯文本(LRC 格式) |
-| `url` | 获取播放链接 | 是 | 302 重定向 |
-| `pic` | 获取封面图片 | 是 | 302 重定向 |
-
-### 响应格式
-
-**列表数据** (search/song/album/artist/playlist):
-
-```json
-[
-  {
-    "title": "歌曲名称",
-    "author": "艺术家1 / 艺术家2",
-    "url": "https://your-domain.com/api?server=netease&type=url&id=xxx&auth=xxx",
-    "pic": "https://your-domain.com/api?server=netease&type=pic&id=xxx&auth=xxx",
-    "lrc": "https://your-domain.com/api?server=netease&type=lrc&id=xxx&auth=xxx"
-  }
-]
-```
-
-**歌词数据** (lrc):
-
-```
-[00:00.000] 歌词第一行
-[00:05.123] 歌词第二行 (翻译内容)
-[00:10.456] 歌词第三行
-```
-
-**音频/图片** (url/pic):
-- 成功:302 重定向到实际资源 URL
-- 失败:404 Not Found
-
-### 请求示例
-
-搜索歌曲:
-```bash
-curl "http://localhost:80/api?server=netease&type=search&id=周杰伦"
-```
-
-获取歌曲详情:
-```bash
-curl "http://localhost:80/api?server=netease&type=song&id=歌曲ID"
-```
-
-获取歌词(需要 token):
-```bash
-curl "http://localhost:80/api?server=netease&type=lrc&id=歌曲ID&auth=计算的token"
-```
-
-### 鉴权机制
-
-敏感操作(`lrc`、`url`、`pic`)需要提供 HMAC-SHA1 签名的 token:
-
-```javascript
-// Token 计算公式
-token = HMAC-SHA1(METING_TOKEN, server + type + id)
-```
-
-示例(使用 Node.js):
-```javascript
-const crypto = require('crypto');
-
-function generateToken(server, type, id, secret = 'token') {
-  const message = `${server}${type}${id}`;
-  return crypto.createHmac('sha1', secret).update(message).digest('hex');
-}
-
-const token = generateToken('netease', 'url', '123456');
-```
-
-## 缓存策略
-
-- 默认缓存容量:1000 条记录
-- 缓存时长:
-  - `url` 类型:10 分钟
-  - 其他类型:1 小时
-- 响应头 `x-cache`:
-  - `miss`:缓存未命中,调用上游 API
-  - 无此头:缓存命中
-
-## Cookie 配置
-
-部分音乐平台的 API 需要登录态才能访问完整数据。可以通过以下两种方式配置 Cookie:
-
-### 方式一:环境变量(推荐)
-
-通过环境变量 `METING_COOKIE_大写平台名` 配置:
-
-```bash
-# Docker 部署示例
-docker run -d \
-  -p 80:80 \
-  -e METING_COOKIE_NETEASE="your_netease_cookie" \
-  -e METING_COOKIE_TENCENT="your_tencent_cookie" \
-  --name meting-api \
-  meting-api
-```
-
-### 方式二:文件存储
-
-在项目根目录 `cookie/` 文件夹下创建以平台名命名的文件(无扩展名):
-
-```
-cookie/
-  ├── netease    # 网易云音乐 Cookie
-  ├── tencent    # QQ音乐 Cookie
-  ├── kugou      # 酷狗音乐 Cookie
-  └── ...
-```
-
-每个文件存储对应平台的 Cookie 字符串。
-
-### Cookie 优先级
-
-1. 优先从环境变量读取(`METING_COOKIE_NETEASE` 等)
-2. 环境变量不存在时从文件读取(`cookie/netease` 等)
-
-### Cookie 缓存
-
-- Cookie 内容会在内存中缓存 5 分钟,减少文件系统读取
-- 使用文件存储时,修改 cookie 文件会自动清除缓存,立即生效
-- 环境变量方式需要重启服务才能更新
-
-### Referrer 白名单
-
-通过 `METING_COOKIE_ALLOW_HOSTS` 环境变量限制哪些来源可以使用 Cookie:
-
-```bash
-# 仅允许特定域名使用 Cookie
-METING_COOKIE_ALLOW_HOSTS=example.com,music.example.com
-```
-
-不设置时不限制来源。这可以防止 Cookie 被第三方滥用。
-
-## Kugou 监控状态说明
-
-## Kugou Upstream 接入
-
-当配置 `METING_KUGOU_UPSTREAM_URL` 后,`server=kugou` 的以下能力会优先走上游服务:
-
-- `song`
-- `playlist`
-- `lrc`
-- `url`
-- `pic`
-
-当前默认保留 `search` 走原有 Meting 搜索链路,因为公开搜索接口波动更大,原链路在大多数场景下更稳。
-
-外层仍保持 Meting 输出格式:
-
-- 列表接口继续返回 `title` / `author` / `url` / `pic` / `lrc`
-- `type=url` 继续返回 `302` 到酷狗真实音频地址
-- `type=pic` 继续返回 `302` 到酷狗真实封面地址
-
-推荐把上游部署在本机回环地址,例如:
-
-```bash
+HTTP_PORT=80
+METING_URL=https://your-domain.example
+METING_TOKEN=replace-me
+ADMIN_PASSWORD=replace-me
 METING_KUGOU_UPSTREAM_URL=http://127.0.0.1:3100
 ```
 
-如果上游不可用,当前实现会自动回退到原有链路。
+常用根层环境变量：
 
-`/monitor/kugou` 用来观察酷狗路由池当前能力。这里有两类字段容易混淆:
+| 变量 | 说明 |
+|---|---|
+| `ADMIN_PASSWORD` | 管理页密码 |
+| `METING_URL` | 对外访问地址，用于生成资源链接 |
+| `METING_TOKEN` | `url / pic / lrc` 的签名密钥 |
+| `METING_KUGOU_UPSTREAM_URL` | 指向 `KuGouMusicApi`，典型值 `http://127.0.0.1:3100` |
+| `METING_KUGOU_PREMIUM_KEY` | 命中专业池的额外 key |
+| `METING_COOKIE_KUGOU_PREMIUM` | 专业池环境变量 Cookie |
+| `METING_COOKIE_KUGOU_GENERAL` | 普通池环境变量 Cookie |
+| `METING_COOKIE_KUGOU` | Kugou 通用环境变量 Cookie，会影响专业池回退 |
+| `METING_COOKIE_ALLOW_HOSTS` | 允许通过 referrer 使用 Cookie 的域名白名单 |
+| `METING_KUGOU_ADMIN_LAZY_REFRESH_MS` | 管理页懒刷新窗口，默认 6 小时 |
 
-### 池子名称
+### 3. 配置 upstream 子项目
 
-- `Pro`: 命中有效 `key` 或命中 Referrer 白名单的对外池,优先走 Pro Cookie
-- `Normal (CK)`: 未命中 Pro 条件的对外普通池,使用 `METING_COOKIE_KUGOU_GENERAL`
-- `Internal (Guest)`: 内部匿名基础池,不依赖 Cookie,只在 `/monitor/kugou` 返回中可见
+`lite` 开关不在根目录 `.env`，而在：
 
-当前运行逻辑中,`Normal (CK)` 超过分钟额度后会自动回退到 `Internal (Guest)`。这时非 VIP 歌通常仍可解析,VIP 歌可能只剩试听能力。
+- `KuGouMusicApi/.env`
 
-### 能力状态
-
-- `Full access`: VIP 探针歌曲可拿到完整播放链接
-- `Preview only`: VIP 探针歌曲只能拿到试听片段,通常约 1 分钟
-- `Unavailable`: 对应池子的 Cookie 不可用,或基础探活未通过
-- `Probe issue`: 基础探活正常,但 VIP 探针歌曲未返回可用播放链接
-- `Guest only`: 基础游客服务可用,但 VIP 探针没有可用播放链接
-- `Available`: 基础探活正常,但当前未启用 VIP 探针,只能确认池子可用
-- `Minute exhausted`: 当前分钟内计入额度的真实上游请求已用尽,需等待下一分钟刷新
-
-### 额度相关字段
-
-- `currentMinute`: 当前分钟内计入额度的真实上游请求数,只统计未命中缓存的上游解析
-- `remainingMinute`: 当前分钟剩余额度
-- `exemptRequests`: 已豁免但未计入额度的请求数
-- `blockedRequests`: 因分钟额度耗尽而被直接拦截的请求数
-
-## 错误处理
-
-API 返回标准 HTTP 状态码:
-
-| 状态码 | 说明 |
-|--------|------|
-| 200 | 请求成功 |
-| 302 | 重定向到资源(url/pic 类型) |
-| 400 | 参数错误 |
-| 401 | 鉴权失败 |
-| 404 | 资源不存在 |
-| 500 | 上游 API 调用失败或返回格式异常 |
-
-错误信息通过响应头 `x-error-message` 返回。
-
-## 开发
-
-### 代码规范
-
-项目使用 ESLint Standard 规范:
+示例：
 
 ```bash
-yarn lint
+platform=lite
+PORT=3100
+HOST=127.0.0.1
 ```
 
-### 技术栈
+重点：
 
-- **运行时**: Node.js 22+ (ES Module)
-- **框架**: [Hono](https://hono.dev/) 4.x
-- **核心库**: [@meting/core](https://www.npmjs.com/package/@meting/core) 1.5+
-- **缓存**: lru-cache 11.x
-- **日志**: pino (JSON 格式)
-- **加密**: hash.js (HMAC-SHA1)
+- `platform=lite` 才表示 upstream 按概念版参数工作
+- `KuGouMusicApi` 默认端口实际是 `3100`
+- 不同平台的 token 不通用，切换到 `lite` 后应重新登录或刷新
 
-## 许可证
+### 4. 启动
 
-MIT License
+开发时可分别启动：
 
-## 相关项目
+```bash
+# 根层
+npm run dev
 
-- [@meting/core](https://www.npmjs.com/package/@meting/core) - Meting 核心库
-- [Meting](https://github.com/metowolf/Meting) - PHP 版本
+# upstream
+cd KuGouMusicApi
+npm run dev
+```
+
+生产环境推荐 PM2：
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+这会同时启动：
+
+- `meting-api`
+- `kugou-upstream`
+
+修改环境变量后建议：
+
+```bash
+pm2 restart meting-api --update-env
+pm2 restart kugou-upstream --update-env
+```
+
+## 管理页
+
+登录入口：
+
+- `/music/manage/login`
+- `/api/manage/login`
+
+公开监控页：
+
+- `/music/manage/monitor`
+- `/api/manage/monitor`
+
+管理页现在可以直接看到：
+
+- `KuGouMusicApi/.env` 里读到的 `platform`
+- `premium / general` 当前实际生效的 Cookie 来源：`env` 还是 `file`
+- 当前账号 `userid / vip_type / expire_time`
+- 最近一次 refresh 结果
+- 最近一次 claim 结果
+- 最近一次 upstream 命中或回退状态
+
+管理动作包括：
+
+- 二维码登录写入池
+- 短信验证码登录写入池
+- 手动 refresh 登录态
+- 一键领取概念版会员
+- 清空 / 复制 / 迁移文件池
+
+二维码和短信会话、refresh/claim 状态会写入：
+
+- `data/kugou-admin-state.json`
+
+## 文件池与环境变量覆盖
+
+Kugou 的读取顺序是：
+
+1. 环境变量
+2. 文件池
+
+也就是说：
+
+- 你在管理页写入的是 `cookie/kugou-premium`、`cookie/kugou-general`
+- 但如果环境里还保留着 `METING_COOKIE_KUGOU*`
+- 运行时依然优先吃环境变量
+
+这也是“后台明明写了新的概念版 CK，但请求看起来还像旧标准 VIP”的最常见原因。
+
+## 概念版会员领取
+
+根层已经新增：
+
+- `POST /music/manage/kugou/vip/claim`
+- `POST /music/manage/kugou/vip/claim-all`
+- `POST /api/manage/kugou/vip/claim`
+- `POST /api/manage/kugou/vip/claim-all`
+
+行为原则：
+
+- 不做 cron
+- 只做按钮触发或手动接口触发
+- claim 前会按懒刷新策略先尝试 refresh
+- claim 后会重新校验 VIP 状态并写回文件池
+
+如果你想拿 JSON，可以在请求后面加 `?format=json`。
+
+## 常见排查
+
+### 1. 页面显示 `lite`，但实际像还在走标准 VIP
+
+先看三件事：
+
+- 管理页里 `platform` 是否真的是 `lite`
+- 当前实际 Cookie 来源是不是 `env`
+- 响应头 `x-kugou-upstream` 是 `hit` 还是 `fallback-meting`
+
+典型情况是：
+
+- `platform=lite`
+- 但运行时还在吃旧的 `METING_COOKIE_KUGOU*`
+- 或者 upstream 失败后静默回退到了非 upstream 链路
+
+### 2. 后台写了 CK，为什么没立刻生效
+
+因为写入的是文件池，而运行时读取是 `env` 优先。
+
+需要先移除或清空对应的 `METING_COOKIE_KUGOU*` 环境变量，再重启进程。
+
+### 3. 为什么 VIP 一过期就失效
+
+之前根层没有“概念版免费会员领取”入口。现在已经接入手动 claim，但它仍然不是定时任务，需要你手动触发或在管理页按需执行。
+
+### 4. 怎么确认这次请求到底有没有走 upstream
+
+看响应头：
+
+- `x-kugou-upstream: hit`
+- `x-kugou-upstream: fallback-meting`
+- `x-kugou-upstream: miss`
+
+## 关键文件
+
+- `src/service/api.js`
+- `src/service/admin.js`
+- `src/utils/kugou-upstream.js`
+- `src/utils/kugou-upstream-auth.js`
+- `src/utils/kugou-upstream-vip.js`
+- `src/utils/kugou-admin-actions.js`
+- `src/utils/cookie.js`
+- `ecosystem.config.cjs`
+

@@ -125,6 +125,18 @@ export const normalizeKugouCookieForMeting = ({ existingCookie = '', upstreamCoo
     current.kg_mid = upstream.KUGOU_API_MID
     current.kg_mid_temp = upstream.KUGOU_API_MID
   }
+  if (upstream.KUGOU_API_GUID) {
+    current.KUGOU_API_GUID = upstream.KUGOU_API_GUID
+  }
+  if (upstream.KUGOU_API_DEV) {
+    current.KUGOU_API_DEV = upstream.KUGOU_API_DEV
+  }
+  if (upstream.KUGOU_API_MAC) {
+    current.KUGOU_API_MAC = upstream.KUGOU_API_MAC
+  }
+  if (upstream.KUGOU_API_PLATFORM) {
+    current.KUGOU_API_PLATFORM = upstream.KUGOU_API_PLATFORM
+  }
 
   return stringifyCookie(current)
 }

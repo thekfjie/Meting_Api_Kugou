@@ -5,7 +5,7 @@ const getBaseUrl = () => String(config.meting.kugou.upstream.url || '').trim().r
 
 const normalizeText = (value) => String(value || '').trim()
 
-const request = async (path, { query = {}, cookie = '' } = {}) => {
+const request = async (path, { query = {}, cookie = '', method = 'GET', body = null } = {}) => {
   const baseUrl = getBaseUrl()
   if (!baseUrl) return null
 
@@ -20,26 +20,33 @@ const request = async (path, { query = {}, cookie = '' } = {}) => {
   }
   if (cookie) headers.Cookie = cookie
 
-  const response = await fetch(url, {
-    method: 'GET',
+  const init = {
+    method,
     headers,
     redirect: 'follow',
     signal: AbortSignal.timeout(config.meting.kugou.upstream.timeoutMs)
-  })
+  }
+
+  if (body !== null) {
+    headers['Content-Type'] = 'application/json; charset=utf-8'
+    init.body = JSON.stringify(body)
+  }
+
+  const response = await fetch(url, init)
 
   const setCookie = response.headers.getSetCookie ? response.headers.getSetCookie() : []
   const text = await response.text()
-  let body = null
+  let responseBody = null
 
   try {
-    body = JSON.parse(text)
+    responseBody = JSON.parse(text)
   } catch (error) {
-    body = null
+    responseBody = null
   }
 
   return {
     ok: response.ok,
-    body,
+    body: responseBody,
     text,
     cookies: setCookie
   }
@@ -63,20 +70,36 @@ const cookieMapToHeader = (cookieMap = {}) => {
     .join('; ')
 }
 
-const getAuthCookie = (cookie = '') => {
+const getAuthCookie = ({ cookie = '', dfid = '' } = {}) => {
   const parsed = parseKugouCookie(cookie)
   const out = []
+
+  const normalizedDfid = normalizeText(dfid || parsed.dfid || parsed.kg_dfid)
+  const mid = normalizeText(parsed.KUGOU_API_MID || parsed.mid || parsed.kg_mid || parsed.kg_mid_temp)
+  const guid = normalizeText(parsed.KUGOU_API_GUID)
+  const dev = normalizeText(parsed.KUGOU_API_DEV)
+  const mac = normalizeText(parsed.KUGOU_API_MAC)
+  const platform = normalizeText(parsed.KUGOU_API_PLATFORM)
+
   if (parsed.t) out.push(`token=${parsed.t}`)
   if (parsed.KugooID) out.push(`userid=${parsed.KugooID}`)
   if (parsed.t1 !== undefined) out.push(`t1=${parsed.t1}`)
   if (parsed.vip_type !== undefined) out.push(`vip_type=${parsed.vip_type}`)
   if (parsed.vip_token !== undefined) out.push(`vip_token=${parsed.vip_token}`)
-  if (parsed.dfid) out.push(`dfid=${parsed.dfid}`)
-  if (parsed.mid) out.push(`KUGOU_API_MID=${parsed.mid}`)
+  if (normalizedDfid) out.push(`dfid=${normalizedDfid}`)
+  if (mid) out.push(`KUGOU_API_MID=${mid}`)
+  if (guid) out.push(`KUGOU_API_GUID=${guid}`)
+  if (dev) out.push(`KUGOU_API_DEV=${dev}`)
+  if (mac) out.push(`KUGOU_API_MAC=${mac}`)
+  if (platform) out.push(`KUGOU_API_PLATFORM=${platform}`)
   return out.join('; ')
 }
 
 export const hasKugouUpstreamAuth = () => Boolean(getBaseUrl())
+export const requestKugouUpstream = request
+export const mergeKugouSetCookies = mergeCookies
+export const kugouCookieMapToHeader = cookieMapToHeader
+export const buildKugouUpstreamAuthCookie = getAuthCookie
 
 export const fetchKugouQrLogin = async () => {
   const keyResp = await request('/login/qr/key', { query: { timestamp: Date.now() } })
@@ -158,7 +181,7 @@ export const checkKugouQrLogin = async (key) => {
 export const refreshKugouLogin = async (cookie) => {
   const response = await request('/login/token', {
     query: { timestamp: Date.now() },
-    cookie: getAuthCookie(cookie)
+    cookie: getAuthCookie({ cookie })
   })
 
   return {
@@ -168,7 +191,7 @@ export const refreshKugouLogin = async (cookie) => {
 }
 
 export const fetchKugouLoginProfile = async (cookie) => {
-  const authCookie = getAuthCookie(cookie)
+  const authCookie = getAuthCookie({ cookie })
   const [detailResp, vipResp] = await Promise.all([
     request('/user/detail', { query: { timestamp: Date.now() }, cookie: authCookie }),
     request('/user/vip/detail', { query: { timestamp: Date.now() }, cookie: authCookie })
