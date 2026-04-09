@@ -1,11 +1,13 @@
-const { appid, clientver, signParamsKey, cryptoMd5 } = require('../util');
-// 获取视频详情
+const util = require('../util');
+
+// 鑾峰彇瑙嗛璇︽儏
 module.exports = (params, useAxios) => {
-  const dfid = params?.cookie?.dfid || '-'; // 自定义
-  const mid = params?.cookie?.KUGOU_API_MID; // 可以自定义
-  const uuid = cryptoMd5(`${dfid}${mid}`); // 可以自定义
+  const { appid, clientver, signParamsKey, cryptoMd5 } = util;
+  const dfid = params?.cookie?.dfid || '-';
+  const mid = params?.cookie?.KUGOU_API_MID;
+  const uuid = cryptoMd5(`${dfid}${mid}`);
   const token = params?.token || params?.cookie?.token || '';
-  const clienttime = Math.floor(new Date().getTime() / 1000);
+  const clienttime = Math.floor(Date.now() / 1000);
 
   const resource = (params.id || '').split(',').map((s) => ({ video_id: s }));
 
@@ -21,6 +23,7 @@ module.exports = (params, useAxios) => {
     show_resolution: 1,
     data: resource,
   };
+
   return useAxios({
     url: '/v1/video',
     method: 'POST',

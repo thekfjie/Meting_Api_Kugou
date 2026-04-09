@@ -1,10 +1,10 @@
 import config from '../config.js'
 import { buildKugouUpstreamAuthCookie } from './kugou-upstream-auth.js'
+import { buildKugouUpstreamRuntimeHeaders, getKugouPoolRuntime } from './kugou-upstream-runtime.js'
 
 const DFID_TTL_MS = 1000 * 60 * 60 * 6
 
-let cachedDfid = ''
-let cachedDfidAt = 0
+const cachedDfids = new Map()
 
 const getBaseUrl = () => String(config.meting.kugou.upstream.url || '').trim().replace(/\/+$/, '')
 
@@ -67,7 +67,7 @@ const pickAuthor = (names = [], fallback = '') => {
   return author || normalizeText(fallback) || '未知歌手'
 }
 
-const requestUpstream = async (path, { query = {}, cookie = '' } = {}) => {
+const requestUpstream = async (path, { query = {}, cookie = '', headers: extraHeaders = {} } = {}) => {
   const baseUrl = getBaseUrl()
   if (!baseUrl) return null
 
@@ -81,6 +81,7 @@ const requestUpstream = async (path, { query = {}, cookie = '' } = {}) => {
     Accept: 'application/json, text/plain, */*'
   }
   if (cookie) headers.Cookie = cookie
+  Object.assign(headers, extraHeaders || {})
 
   try {
     const response = await fetch(url, {
@@ -103,19 +104,22 @@ const buildAuthCookie = ({ cookie = '', dfid = '' } = {}) => {
   return buildKugouUpstreamAuthCookie({ cookie, dfid })
 }
 
-const ensureUpstreamDfid = async () => {
+const ensureUpstreamDfid = async (pool, cookie = '') => {
+  const runtime = await getKugouPoolRuntime(pool, { cookie })
+  const cacheKey = `${runtime.pool}:${runtime.platform}:${runtime.guid}`
   const now = Date.now()
-  if (cachedDfid && now - cachedDfidAt < DFID_TTL_MS) {
-    return cachedDfid
+  const cached = cachedDfids.get(cacheKey)
+  if (cached?.dfid && now - cached.at < DFID_TTL_MS) {
+    return cached.dfid
   }
 
-  const response = await requestUpstream('/register/dev')
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
+  const response = await requestUpstream('/register/dev', { headers })
   const dfid = normalizeText(response?.data?.dfid)
   if (!dfid) return ''
 
-  cachedDfid = dfid
-  cachedDfidAt = now
-  return cachedDfid
+  cachedDfids.set(cacheKey, { dfid, at: now })
+  return dfid
 }
 
 const mapSongFromPrivilege = (item, meta = null) => {
@@ -160,7 +164,7 @@ const mapSongFromPlaylist = (item) => {
   }
 }
 
-const getSongMeta = async (albumAudioId, cookie) => {
+const getSongMeta = async (albumAudioId, cookie, pool) => {
   const normalizedAlbumAudioId = normalizeText(albumAudioId)
   if (!normalizedAlbumAudioId) return null
 
@@ -169,54 +173,57 @@ const getSongMeta = async (albumAudioId, cookie) => {
       album_audio_id: normalizedAlbumAudioId,
       fields: 'album_info,base,authors.base'
     },
-    cookie: buildAuthCookie({ cookie })
+    cookie: buildAuthCookie({ cookie }),
+    headers: await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   })
 
   return response?.data?.[0] || null
 }
 
-const getPrivilegeItem = async (hash, cookie) => {
+const getPrivilegeItem = async (hash, cookie, pool) => {
   const response = await requestUpstream('/privilege/lite', {
     query: { hash },
-    cookie: buildAuthCookie({ cookie })
+    cookie: buildAuthCookie({ cookie }),
+    headers: await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   })
 
   return response?.data?.[0] || null
 }
 
-const getUpstreamSong = async ({ id, cookie }) => {
+const getUpstreamSong = async ({ id, cookie, pool }) => {
   const hash = extractKugouHashFromResourceId(id)
   if (!hash) return null
 
-  const privilegeItem = await getPrivilegeItem(hash, cookie)
+  const privilegeItem = await getPrivilegeItem(hash, cookie, pool)
   if (!privilegeItem) return null
 
-  const meta = await getSongMeta(privilegeItem.album_audio_id, cookie)
+  const meta = await getSongMeta(privilegeItem.album_audio_id, cookie, pool)
   return mapSongFromPrivilege(privilegeItem, meta)
 }
 
-const getUpstreamPic = async ({ id, cookie }) => {
+const getUpstreamPic = async ({ id, cookie, pool }) => {
   const hash = extractKugouHashFromResourceId(id)
   if (!hash) return null
 
-  const privilegeItem = await getPrivilegeItem(hash, cookie)
+  const privilegeItem = await getPrivilegeItem(hash, cookie, pool)
   if (!privilegeItem) return null
 
   const cover = normalizeUrl(privilegeItem.info?.image || privilegeItem.trans_param?.union_cover)
   return cover ? { url: cover } : null
 }
 
-const getUpstreamUrl = async ({ id, cookie }) => {
+const getUpstreamUrl = async ({ id, cookie, pool }) => {
   const hash = extractKugouHashFromResourceId(id)
   if (!hash) return null
 
-  const dfid = await ensureUpstreamDfid()
+  const dfid = await ensureUpstreamDfid(pool, cookie)
   const response = await requestUpstream('/song/url', {
     query: {
       hash,
       album_audio_id: extractKugouAlbumAudioIdFromResourceId(id)
     },
-    cookie: buildAuthCookie({ cookie, dfid })
+    cookie: buildAuthCookie({ cookie, dfid }),
+    headers: await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   })
 
   const url = Array.isArray(response?.url)
@@ -253,12 +260,13 @@ const getUpstreamLyric = async ({ id }) => {
   return lyric ? { lyric, tlyric: '' } : null
 }
 
-const getUpstreamPlaylist = async ({ id }) => {
+const getUpstreamPlaylist = async ({ id, pool }) => {
   const normalizedId = normalizeText(id)
   if (!normalizedId) return null
 
   const detail = await requestUpstream('/playlist/detail', {
-    query: { ids: normalizedId }
+    query: { ids: normalizedId },
+    headers: await buildKugouUpstreamRuntimeHeaders(pool)
   })
   const detailItem = detail?.data?.[0]
   if (!detailItem?.global_collection_id) return null
@@ -273,7 +281,8 @@ const getUpstreamPlaylist = async ({ id }) => {
         id: normalizedId,
         page,
         pagesize: pageSize
-      }
+      },
+      headers: await buildKugouUpstreamRuntimeHeaders(pool)
     })
     const chunk = Array.isArray(response?.data?.songs) ? response.data.songs : []
     if (chunk.length === 0) break
@@ -308,13 +317,13 @@ export const buildKugouCompositeId = (hash, albumAudioId = '') => {
   return buildCompositeId(hash, albumAudioId)
 }
 
-export const getKugouUpstreamData = async ({ type, id, cookie = '' }) => {
+export const getKugouUpstreamData = async ({ type, id, cookie = '', pool = 'premium' }) => {
   if (!hasKugouUpstream()) return null
 
-  if (type === 'song') return getUpstreamSong({ id, cookie })
-  if (type === 'playlist') return getUpstreamPlaylist({ id })
+  if (type === 'song') return getUpstreamSong({ id, cookie, pool })
+  if (type === 'playlist') return getUpstreamPlaylist({ id, pool })
   if (type === 'lrc') return getUpstreamLyric({ id })
-  if (type === 'url') return getUpstreamUrl({ id, cookie })
-  if (type === 'pic') return getUpstreamPic({ id, cookie })
+  if (type === 'url') return getUpstreamUrl({ id, cookie, pool })
+  if (type === 'pic') return getUpstreamPic({ id, cookie, pool })
   return null
 }

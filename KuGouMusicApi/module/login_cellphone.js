@@ -1,5 +1,6 @@
 // 手机登录
-const { cryptoAesDecrypt, cryptoAesEncrypt, cryptoRSAEncrypt, signParamsKey, isLite, randomString } = require('../util');
+const { cryptoAesDecrypt, cryptoAesEncrypt, cryptoRSAEncrypt, signParamsKey, randomString } = require('../util');
+const { isLiteRuntime } = require('../util/runtime-context');
 
 let liteT2Key = 'fd14b35e3f81af3817a20ae7adae7020';
 let liteT2Iv = '17a20ae7adae7020';
@@ -7,6 +8,7 @@ let liteT1Key = '5e4ef500e9597fe004bd09a46d8add98';
 let liteT1Iv = '04bd09a46d8add98';
 
 module.exports = (params, useAxios) => {
+  const isLite = isLiteRuntime();
   const dateTime = Date.now();
   const encrypt = cryptoAesEncrypt({ mobile: params?.mobile || '', code: params?.code || '' });
   const mobile = params?.mobile && `${params.mobile.toString().substring(0, 2)}*****${params.mobile.toString().substring(10, 11)}`;

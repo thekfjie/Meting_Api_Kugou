@@ -1,5 +1,6 @@
-const { clientver } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { clientver } = util;
   const userid = params?.userid || params?.cookie?.userid || 0;
   const vip_type = params?.vip_type || params?.cookie?.vip_type || 65530;
   const dataMap = {
@@ -19,7 +20,7 @@ module.exports = (params, useAxios) => {
     url: '/searchnofocus/v1/search_no_focus_word',
     method: 'POST',
     data: dataMap,
-    params: { clientver: 12329 },
+    params: { clientver },
     encryptType: 'android',
     cookie: params?.cookie || {},
   });

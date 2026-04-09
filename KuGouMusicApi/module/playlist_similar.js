@@ -1,6 +1,7 @@
-const { appid, clientver, signParamsKey } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver, signParamsKey } = util;
   const data = (params?.ids || '').split(',').map((s) => ({ 'global_collection_id': s }));
   const clienttime = Date.now();
 

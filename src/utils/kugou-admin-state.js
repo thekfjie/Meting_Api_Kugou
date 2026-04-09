@@ -8,11 +8,19 @@ let cachedState = null
 const createPoolState = () => ({
   lastRefreshAt: '',
   lastRefreshResult: null,
+  nextRefreshAt: '',
   lastClaimAt: '',
   lastClaimResult: null,
+  nextClaimAt: '',
   lastProfileAt: '',
   account: null,
   lastError: null
+})
+
+const createRuntimeState = () => ({
+  guid: '',
+  dev: '',
+  mac: ''
 })
 
 const createDefaultState = () => ({
@@ -20,6 +28,10 @@ const createDefaultState = () => ({
   pools: {
     premium: createPoolState(),
     general: createPoolState()
+  },
+  runtime: {
+    premium: createRuntimeState(),
+    general: createRuntimeState()
   },
   sessions: {
     qrLogin: null,
@@ -37,6 +49,16 @@ const normalizeState = (value = {}) => ({
   pools: {
     premium: normalizePoolState(value?.pools?.premium),
     general: normalizePoolState(value?.pools?.general)
+  },
+  runtime: {
+    premium: {
+      ...createRuntimeState(),
+      ...(value?.runtime?.premium || {})
+    },
+    general: {
+      ...createRuntimeState(),
+      ...(value?.runtime?.general || {})
+    }
   },
   sessions: {
     qrLogin: value?.sessions?.qrLogin || null,
@@ -82,6 +104,22 @@ export async function setKugouAdminPoolState (pool, patch) {
     state.pools[pool] = {
       ...createPoolState(),
       ...(state.pools?.[pool] || {}),
+      ...(patch || {})
+    }
+    return state
+  })
+}
+
+export async function getKugouRuntimeProfile (pool) {
+  const state = await readKugouAdminState()
+  return state.runtime?.[pool] || createRuntimeState()
+}
+
+export async function setKugouRuntimeProfile (pool, patch) {
+  return updateKugouAdminState((state) => {
+    state.runtime[pool] = {
+      ...createRuntimeState(),
+      ...(state.runtime?.[pool] || {}),
       ...(patch || {})
     }
     return state

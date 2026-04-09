@@ -1,3 +1,5 @@
+const util = require('../util');
+
 /**
  *
  * @param {Record<string, any>} params
@@ -5,6 +7,7 @@
  * @returns
  */
 module.exports = (params, useAxios) => {
+  const { clientver } = util;
   const dataMap = { tags: {} };
   return new Promise((resolve, reject) => {
     useAxios({
@@ -14,7 +17,7 @@ module.exports = (params, useAxios) => {
       method: 'POST',
       data: dataMap,
       params: {
-        clientver: 12349,
+        clientver,
         area_code: 1,
       },
       cookie: params?.cookie || {},

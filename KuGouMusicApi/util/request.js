@@ -1,8 +1,7 @@
 const axios = require('axios');
-const { cryptoMd5 } = require('./crypto');
 const { signKey, signatureAndroidParams, signatureRegisterParams, signatureWebParams } = require('./helper');
 const { parseCookieString } = require('./util');
-const { appid, clientver, liteAppid, liteClientver } = require('./config.json');
+const { getRuntimeAppid, getRuntimeClientver } = require('./runtime-context');
 const { resolveProxy } = require('./runtime');
 
 /**
@@ -30,7 +29,6 @@ const { resolveProxy } = require('./runtime');
 
 const createRequest = (options) => {
   return new Promise(async (resolve, reject) => {
-    const isLite = process.env.platform === 'lite';
     const dfid = options?.cookie?.dfid || '-'; // 自定义
     const mid = `${options?.cookie?.KUGOU_API_MID}`; //'334689572176563962868706300678062568191';
     const uuid = '-'; //cryptoMd5(`${dfid}${mid}`); // 可以自定义
@@ -49,8 +47,8 @@ const createRequest = (options) => {
       dfid,
       mid,
       uuid,
-      appid: isLite ? liteAppid : appid,
-      clientver: isLite ? liteClientver : clientver,
+      appid: getRuntimeAppid(),
+      clientver: getRuntimeClientver(),
       clienttime,
     };
 

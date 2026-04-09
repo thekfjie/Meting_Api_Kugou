@@ -1,6 +1,7 @@
-const { appid, clientver, signParamsKey } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver, signParamsKey } = util;
   const userid = params?.cookie?.userid || params?.userid || 0;
   const vip_type = params?.cookie?.vip_type || params?.vipType || 0;
   const dateTime = Date.now();
@@ -24,7 +25,7 @@ module.exports = (params, useAxios) => {
     platform: 'ios',
     area_code: 1,
     fakem: 'ca981cfc583a4c37f28d2d49000013c16a0a',
-    clientver: 11850,
+    clientver,
     mode: params?.mode || 'normal',
     active_swtich: 'on',
     key: signParamsKey(dateTime),
@@ -41,7 +42,7 @@ module.exports = (params, useAxios) => {
   return useAxios({
     url: '/genesisapi/v1/newepoch_song_rec/feed',
     data: dataMap,
-    params: { sort_type: 1, platform: 'ios', page: 1, content_ver: 4, clientver: 11850 },
+    params: { sort_type: 1, platform: 'ios', page: 1, content_ver: 4, clientver },
     method: 'post',
     encryptType: 'android',
     cookie: params?.cookie || {},

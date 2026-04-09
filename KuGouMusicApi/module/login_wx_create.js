@@ -1,10 +1,10 @@
 const axios = require('axios');
-const { wx_appid, wx_secret, cryptoMd5, cryptoSha1, randomString, wx_lite_appid, wx_lite_secret, isLite } = require('../util');
-
-const appid = isLite ? wx_lite_appid : wx_appid;
-const secret = isLite ? wx_lite_secret : wx_secret;
+const { cryptoMd5, cryptoSha1, randomString } = require('../util');
+const { getRuntimeWxAppid, getRuntimeWxSecret } = require('../util/runtime-context');
 
 const accessToken = () => {
+  const appid = getRuntimeWxAppid();
+  const secret = getRuntimeWxSecret();
   return axios({ url: 'https://api.weixin.qq.com/cgi-bin/token', params: { appid, secret, grant_type: 'client_credential' } });
 };
 
@@ -24,6 +24,7 @@ module.exports = (params, useAxios) => {
         const ticketResp = await ticket(accessTokenResp.data.access_token);
 
         if (ticketResp.data?.errcode === 0) {
+          const appid = getRuntimeWxAppid();
           const ticket = ticketResp.data.ticket;
           const timestamp = Date.now();
           const noncestr = cryptoMd5(randomString());

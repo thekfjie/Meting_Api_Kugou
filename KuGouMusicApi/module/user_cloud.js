@@ -1,5 +1,6 @@
-const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2, signParamsKey, clientver, appid } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2, signParamsKey, clientver, appid } = util;
   const answer = { status: 500, body: {}, cookie: [] };
   return new Promise(async (resolve) => {
     try {

@@ -1,17 +1,18 @@
-import config from '../config.js'
 import {
   normalizeKugouCookieForMeting,
   parseSimpleCookie,
   stringifyCookie,
   writeCookiePool
 } from './admin.js'
+import { buildNextClaimAt, buildNextRefreshAt } from './kugou-auto-schedule.js'
 import { inspectCookieSource, readCookieFile, readCookiePoolFile } from './cookie.js'
 import {
   fetchKugouLoginProfile,
   hasKugouUpstreamAuth,
   refreshKugouLogin
 } from './kugou-upstream-auth.js'
-import { getKugouAdminPoolState, setKugouAdminPoolState } from './kugou-admin-state.js'
+import { setKugouAdminPoolState } from './kugou-admin-state.js'
+import { isKugouPoolLite, shouldAutoClaimKugouPool } from './kugou-upstream-runtime.js'
 import {
   fetchKugouVipDetail,
   performKugouLiteVipClaim,
@@ -20,40 +21,19 @@ import {
 
 const KUGOU_POOLS = ['premium', 'general']
 
-const normalizeText = (value) => String(value || '').trim()
 const nowIso = () => new Date().toISOString()
+const normalizePool = pool => (pool === 'general' ? 'general' : 'premium')
+const normalizeText = value => String(value || '').trim()
 
 const pickText = (...values) => {
   for (const value of values) {
     const normalized = normalizeText(value)
     if (normalized) return normalized
   }
-
   return ''
 }
 
-const extractMessage = (body) => {
-  return pickText(
-    body?.msg,
-    body?.message,
-    body?.error,
-    body?.err_msg,
-    body?.error_msg,
-    body?.statusText
-  )
-}
-
-const isRefreshSuccess = (response) => {
-  if (!response?.body) return false
-  if (response.body.status !== undefined && response.body.status !== null && response.body.status !== '') {
-    return Number(response.body.status) === 1
-  }
-  return Object.keys(response.cookieMap || {}).length > 0
-}
-
-const normalizePool = (pool) => (pool === 'general' ? 'general' : 'premium')
-
-const parseDateTime = (value) => {
+const parseDateTime = value => {
   const normalized = normalizeText(value)
   if (!normalized) return 0
 
@@ -64,13 +44,26 @@ const parseDateTime = (value) => {
     ? candidate
     : `${candidate}+08:00`
   const parsed = Date.parse(withZone)
-
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-const hasFutureExpire = (value) => {
-  const parsed = parseDateTime(value)
-  return parsed > Date.now()
+const hasFutureExpire = value => parseDateTime(value) > Date.now()
+
+const extractMessage = body => pickText(
+  body?.msg,
+  body?.message,
+  body?.error,
+  body?.err_msg,
+  body?.error_msg,
+  body?.statusText
+)
+
+const isRefreshSuccess = response => {
+  if (!response?.body) return false
+  if (response.body.status !== undefined && response.body.status !== null && response.body.status !== '') {
+    return Number(response.body.status) === 1
+  }
+  return Object.keys(response.cookieMap || {}).length > 0
 }
 
 const pickPreferredBusiVip = (vipData = {}) => {
@@ -83,12 +76,11 @@ const pickPreferredBusiVip = (vipData = {}) => {
         parseDateTime(item?.vip_end_time),
         parseDateTime(item?.vip_clearday)
       )
-      const active = Number(item?.is_vip || 0) > 0 || expiresAt > Date.now()
 
       return {
         item,
         expiresAt,
-        active,
+        active: Number(item?.is_vip || 0) > 0 || expiresAt > Date.now(),
         concept: normalizeText(item?.busi_type).toLowerCase() === 'concept'
       }
     })
@@ -113,17 +105,10 @@ const hasVip = (account = null) => {
   return ['vip', 'svip', 'tvip', 'concept', 'lite'].some(keyword => vipTypeText.includes(keyword))
 }
 
-const buildErrorResult = ({
-  action,
-  pool,
-  trigger,
-  at,
-  message,
-  sourceInfo
-}) => ({
+const buildErrorResult = ({ action, pool, trigger, at, message, sourceInfo }) => ({
   ok: false,
-  pool,
   action,
+  pool,
   trigger,
   at,
   message,
@@ -131,9 +116,8 @@ const buildErrorResult = ({
   activeKey: sourceInfo?.activeKey || ''
 })
 
-const summarizeStep = (step = null) => {
+const summarizeStep = step => {
   if (!step) return null
-
   return {
     ok: Boolean(step.ok),
     message: step.message || '',
@@ -142,17 +126,13 @@ const summarizeStep = (step = null) => {
 }
 
 const buildCookieUpdatePayload = ({ existingCookie = '', cookieMap = {}, profile = null }) => {
-  const mergedMap = {
-    ...cookieMap
-  }
-
+  const mergedMap = { ...cookieMap }
   const account = summarizeKugouProfile(profile)
+  const current = parseSimpleCookie(existingCookie)
 
   if (account.userId) mergedMap.userid = account.userId
   if (account.cookieVipType) mergedMap.vip_type = account.cookieVipType
   if (account.vipToken) mergedMap.vip_token = account.vipToken
-
-  const current = parseSimpleCookie(existingCookie)
 
   if (!mergedMap.token && current.t) mergedMap.token = current.t
   if (!mergedMap.userid && current.KugooID) mergedMap.userid = current.KugooID
@@ -188,7 +168,13 @@ const persistPoolCookie = async ({ pool, activeCookie = '', cookieMap = {}, prof
   return nextCookie
 }
 
-export const getKugouPoolLabel = (pool) => {
+const buildClaimSchedulePatch = pool => (
+  shouldAutoClaimKugouPool(pool)
+    ? { nextClaimAt: buildNextClaimAt() }
+    : { nextClaimAt: '' }
+)
+
+export const getKugouPoolLabel = pool => {
   if (pool === 'premium') return '专业池'
   if (pool === 'general') return '普通池'
   return pool
@@ -251,7 +237,7 @@ export const syncKugouPoolProfile = async (pool, { record = true } = {}) => {
     }
   }
 
-  const profile = await fetchKugouLoginProfile(cookie)
+  const profile = await fetchKugouLoginProfile(cookie, normalizedPool)
   const account = summarizeKugouProfile(profile)
   const ok = Boolean(account.userId || account.vipType || account.expireTime)
 
@@ -292,6 +278,7 @@ export const applyKugouPoolCookieMap = async (pool, cookieMap = {}, { trigger = 
       message: '没有可写入的登录态',
       sourceInfo
     })
+
     await setKugouAdminPoolState(normalizedPool, {
       lastError: {
         action: 'write',
@@ -299,6 +286,7 @@ export const applyKugouPoolCookieMap = async (pool, cookieMap = {}, { trigger = 
         message: result.message
       }
     })
+
     return result
   }
 
@@ -308,9 +296,12 @@ export const applyKugouPoolCookieMap = async (pool, cookieMap = {}, { trigger = 
     activeCookie,
     cookieMap
   })
+
   const profileResult = await syncKugouPoolProfile(normalizedPool)
 
   await setKugouAdminPoolState(normalizedPool, {
+    nextRefreshAt: buildNextRefreshAt(),
+    ...buildClaimSchedulePatch(normalizedPool),
     ...(profileResult.account ? { lastProfileAt: profileResult.at, account: profileResult.account } : {}),
     lastError: null
   })
@@ -342,8 +333,10 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
       message: '未配置 Kugou upstream，无法刷新登录态',
       sourceInfo
     })
+
     await setKugouAdminPoolState(normalizedPool, {
       lastRefreshAt: at,
+      nextRefreshAt: '',
       lastRefreshResult: result,
       lastError: {
         action: 'refresh',
@@ -351,6 +344,7 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
         message: result.message
       }
     })
+
     return result
   }
 
@@ -364,8 +358,10 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
       message: '当前池没有可刷新的 Cookie',
       sourceInfo
     })
+
     await setKugouAdminPoolState(normalizedPool, {
       lastRefreshAt: at,
+      nextRefreshAt: '',
       lastRefreshResult: result,
       lastError: {
         action: 'refresh',
@@ -373,11 +369,12 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
         message: result.message
       }
     })
+
     return result
   }
 
   try {
-    const response = await refreshKugouLogin(activeCookie)
+    const response = await refreshKugouLogin(activeCookie, normalizedPool)
     if (!isRefreshSuccess(response)) {
       throw new Error(extractMessage(response.body) || 'upstream 未返回新的登录态')
     }
@@ -407,6 +404,7 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
 
     await setKugouAdminPoolState(normalizedPool, {
       lastRefreshAt: at,
+      nextRefreshAt: buildNextRefreshAt(),
       lastRefreshResult: result,
       ...(profileResult.account ? { lastProfileAt: profileResult.at, account: profileResult.account } : {}),
       lastError: null
@@ -425,6 +423,7 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
 
     await setKugouAdminPoolState(normalizedPool, {
       lastRefreshAt: at,
+      nextRefreshAt: buildNextRefreshAt({ retry: true }),
       lastRefreshResult: result,
       lastError: {
         action: 'refresh',
@@ -437,40 +436,34 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
   }
 }
 
-export const ensureKugouPoolFresh = async (pool, { trigger = 'page-open' } = {}) => {
-  const normalizedPool = normalizePool(pool)
-  const state = await getKugouAdminPoolState(normalizedPool)
-  const activeCookie = await readCookieFile('kugou', normalizedPool)
-
-  if (!activeCookie) {
-    return {
-      ok: false,
-      skipped: true,
-      pool: normalizedPool,
-      at: nowIso(),
-      message: '当前池没有可用 Cookie'
-    }
-  }
-
-  const lastRefreshAt = Date.parse(state?.lastRefreshAt || '')
-  if (lastRefreshAt && (Date.now() - lastRefreshAt) < config.admin.kugouLazyRefreshMs) {
-    return {
-      ok: true,
-      skipped: true,
-      pool: normalizedPool,
-      at: nowIso(),
-      message: '登录态仍在懒刷新窗口内',
-      lastRefreshAt: state.lastRefreshAt
-    }
-  }
-
-  return refreshKugouPool(normalizedPool, { trigger })
-}
-
 export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
   const normalizedPool = normalizePool(pool)
   const at = nowIso()
   const sourceInfo = await inspectCookieSource('kugou', normalizedPool)
+
+  if (!isKugouPoolLite(normalizedPool)) {
+    const result = buildErrorResult({
+      action: 'claim',
+      pool: normalizedPool,
+      trigger,
+      at,
+      message: `${getKugouPoolLabel(normalizedPool)}当前是 default (regular) 平台，未启用 Lite 领取`,
+      sourceInfo
+    })
+
+    await setKugouAdminPoolState(normalizedPool, {
+      lastClaimAt: at,
+      ...buildClaimSchedulePatch(normalizedPool),
+      lastClaimResult: result,
+      lastError: {
+        action: 'claim',
+        at,
+        message: result.message
+      }
+    })
+
+    return result
+  }
 
   if (!hasKugouUpstreamAuth()) {
     const result = buildErrorResult({
@@ -481,8 +474,10 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
       message: '未配置 Kugou upstream，无法领取概念版会员',
       sourceInfo
     })
+
     await setKugouAdminPoolState(normalizedPool, {
       lastClaimAt: at,
+      ...buildClaimSchedulePatch(normalizedPool),
       lastClaimResult: result,
       lastError: {
         action: 'claim',
@@ -490,14 +485,11 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
         message: result.message
       }
     })
+
     return result
   }
 
-  const refreshResult = await ensureKugouPoolFresh(normalizedPool, {
-    trigger: `${trigger}-preclaim`
-  })
   const activeCookie = await readCookieFile('kugou', normalizedPool)
-
   if (!activeCookie) {
     const result = buildErrorResult({
       action: 'claim',
@@ -507,8 +499,10 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
       message: '当前池没有可领取的 Cookie',
       sourceInfo
     })
+
     await setKugouAdminPoolState(normalizedPool, {
       lastClaimAt: at,
+      ...buildClaimSchedulePatch(normalizedPool),
       lastClaimResult: result,
       lastError: {
         action: 'claim',
@@ -516,19 +510,20 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
         message: result.message
       }
     })
+
     return result
   }
 
   try {
-    const beforeProfile = await fetchKugouLoginProfile(activeCookie)
+    const beforeProfile = await fetchKugouLoginProfile(activeCookie, normalizedPool)
     const beforeAccount = summarizeKugouProfile(beforeProfile)
 
-    const listenStep = await performKugouLiteVipListen(activeCookie)
+    const listenStep = await performKugouLiteVipListen(activeCookie, normalizedPool)
     const workingCookie = normalizeKugouCookieForMeting({
       existingCookie: activeCookie,
       upstreamCookie: stringifyCookie(listenStep.cookieMap || {})
     })
-    const claimStep = await performKugouLiteVipClaim(workingCookie)
+    const claimStep = await performKugouLiteVipClaim(workingCookie, normalizedPool)
 
     const mergedCookieMap = {
       ...(listenStep.cookieMap || {}),
@@ -538,7 +533,7 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
     const vipDetail = await fetchKugouVipDetail(normalizeKugouCookieForMeting({
       existingCookie: activeCookie,
       upstreamCookie: stringifyCookie(mergedCookieMap)
-    }))
+    }), normalizedPool)
 
     await persistPoolCookie({
       pool: normalizedPool,
@@ -557,11 +552,11 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
     })
     const ok = hasVip(afterAccount) || (listenStep.ok && claimStep.ok)
 
-    let message = `${getKugouPoolLabel(normalizedPool)}领取流程已执行`
+    let message = `${getKugouPoolLabel(normalizedPool)}已执行 Lite 领取流程`
     if (ok && !hasVip(beforeAccount) && hasVip(afterAccount)) {
       message = `${getKugouPoolLabel(normalizedPool)}已更新为可用 VIP 状态`
     } else if (!ok) {
-      message = claimStep.message || listenStep.message || '领取流程未成功，请检查上游返回'
+      message = claimStep.message || listenStep.message || 'Lite 领取流程未成功，请检查上游返回'
     }
 
     const result = {
@@ -573,7 +568,6 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
       message,
       source: sourceInfo.source,
       activeKey: sourceInfo.activeKey,
-      refresh: refreshResult,
       before: beforeAccount,
       after: afterAccount,
       steps: {
@@ -585,6 +579,7 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
 
     await setKugouAdminPoolState(normalizedPool, {
       lastClaimAt: at,
+      ...buildClaimSchedulePatch(normalizedPool),
       lastClaimResult: result,
       ...(afterAccount ? { lastProfileAt: profileResult.at, account: afterAccount } : {}),
       lastError: ok
@@ -609,6 +604,7 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
 
     await setKugouAdminPoolState(normalizedPool, {
       lastClaimAt: at,
+      ...buildClaimSchedulePatch(normalizedPool),
       lastClaimResult: result,
       lastError: {
         action: 'claim',
@@ -624,8 +620,19 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
 export const claimAllKugouLiteVip = async ({ trigger = 'manual' } = {}) => {
   const at = nowIso()
   const results = []
+  const pools = KUGOU_POOLS.filter(pool => isKugouPoolLite(pool))
 
-  for (const pool of KUGOU_POOLS) {
+  if (!pools.length) {
+    return {
+      ok: false,
+      action: 'claim-all',
+      at,
+      message: '当前没有启用 Lite 池，未执行批量领取',
+      results
+    }
+  }
+
+  for (const pool of pools) {
     results.push(await claimKugouLiteVip(pool, { trigger }))
   }
 
@@ -636,8 +643,8 @@ export const claimAllKugouLiteVip = async ({ trigger = 'manual' } = {}) => {
     action: 'claim-all',
     at,
     message: successCount === results.length
-      ? '两个 Cookie 池都已完成领取流程'
-      : `已完成 ${successCount}/${results.length} 个池的领取流程`,
+      ? '全部池的 Lite 领取流程已完成'
+      : `已完成 ${successCount}/${results.length} 个池的 Lite 领取流程`,
     results
   }
 }

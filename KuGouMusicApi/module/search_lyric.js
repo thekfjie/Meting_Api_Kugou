@@ -1,7 +1,8 @@
 // 歌词搜索
-const { appid, clientver } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver } = util;
   const dataMap = {
     album_audio_id: params?.album_audio_id || 0,
     appid,

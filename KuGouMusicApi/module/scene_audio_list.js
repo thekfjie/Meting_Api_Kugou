@@ -1,6 +1,7 @@
-const { appid, clientver } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver } = util;
   const userid = params?.userid || params?.cookie?.userid || 0;
   const token = params?.token || params.cookie?.token || '';
 

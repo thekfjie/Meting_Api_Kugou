@@ -2,9 +2,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const decode = require('safe-decode-uri-component');
-const { cookieToJson, randomString, getGuid, calculateMid } = require('./util/util');
-const { cryptoMd5 } = require('./util/crypto');
+const { cookieToJson } = require('./util/util');
 const { createRequest } = require('./util/request');
+const { getRuntime, resolveRequestRuntime, runWithRuntime } = require('./util/runtime-context');
 const dotenv = require('dotenv');
 const cache = require('./util/apicache').middleware;
 
@@ -21,9 +21,6 @@ const cache = require('./util/apicache').middleware;
  *  server?: import('http').Server,
  * }} ExpressExtension
  */
-
-const guid = cryptoMd5(getGuid());
-const serverDev = randomString(10).toUpperCase();
 
 const envPath = path.join(process.cwd(), '.env');
 if (fs.existsSync(envPath)) {
@@ -94,24 +91,29 @@ async function consturctServer(moduleDefs) {
     next();
   });
 
+  app.use((req, _, next) => {
+    runWithRuntime(resolveRequestRuntime(req, req.cookies || {}), () => next());
+  });
+
   // 将当前平台写入Cookie 以方便查看
   app.use((req, res, next) => {
     const cookies = req.cookies || {};
+    const runtime = getRuntime();
     const isHttps = req.protocol === 'https';
     const cookieSuffix = isHttps ? '; PATH=/; SameSite=None; Secure' : '; PATH=/';
 
-    const ensureCookie = (key, value) => {
-      if (Object.prototype.hasOwnProperty.call(cookies, key)) return;
-      cookies[key] = String(value);
-      res.append('Set-Cookie', `${key}=${cookies[key]}${cookieSuffix}`);
+    const syncCookie = (key, value) => {
+      const stringValue = String(value ?? '');
+      if (cookies[key] === stringValue) return;
+      cookies[key] = stringValue;
+      res.append('Set-Cookie', `${key}=${stringValue}${cookieSuffix}`);
     };
 
-    const mid = calculateMid(process.env.KUGOU_API_GUID ?? guid);
-    ensureCookie('KUGOU_API_PLATFORM', process.env.platform);
-    ensureCookie('KUGOU_API_MID', mid);
-    ensureCookie('KUGOU_API_GUID', process.env.KUGOU_API_GUID ?? guid);
-    ensureCookie('KUGOU_API_DEV', (process.env.KUGOU_API_DEV ?? serverDev).toUpperCase());
-    ensureCookie('KUGOU_API_MAC', (process.env.KUGOU_API_MAC ?? '02:00:00:00:00:00').toUpperCase());
+    syncCookie('KUGOU_API_PLATFORM', runtime.platform === 'lite' ? 'lite' : '');
+    syncCookie('KUGOU_API_MID', runtime.mid);
+    syncCookie('KUGOU_API_GUID', runtime.guid);
+    syncCookie('KUGOU_API_DEV', runtime.dev);
+    syncCookie('KUGOU_API_MAC', runtime.mac);
 
     req.cookies = cookies;
 

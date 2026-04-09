@@ -1,4 +1,5 @@
 const { randomString } = require('../util/util');
+const { isLiteRuntime } = require('../util/runtime-context');
 
 // 获取音乐urls
 // quality 支持 魔法音乐
@@ -12,7 +13,7 @@ module.exports = (params, useAxios) => {
     ? `magic_${params?.quality}`
     : params.quality;
 
-  const isLite = process.env.platform === 'lite';
+  const isLite = isLiteRuntime();
   const page_id = isLite ? 967177915 : 151369488;
   const ppage_id = isLite ? '356753938,823673182,967485191' : '463467626,350369493,788954147';
 

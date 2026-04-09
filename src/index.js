@@ -10,6 +10,7 @@ import adminService from './service/admin.js'
 import demoService from './service/demo.js'
 import kugouMonitorService from './service/kugou-monitor.js'
 import config from './config.js'
+import { startKugouAutoRefreshScheduler } from './utils/kugou-auto-refresh.js'
 
 const app = new Hono()
   .use(requestLogger)
@@ -64,6 +65,7 @@ serve({
 })
 
 logger.info({ port: config.http.port }, 'HTTP server started')
+startKugouAutoRefreshScheduler()
 
 if (config.https.enabled) {
   if (!config.https.keyPath || !config.https.certPath) {

@@ -1,5 +1,6 @@
-const { appid, clientver, signParamsKey } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { appid, clientver, signParamsKey } = util;
   const dateTime = Date.now();
   const dfid = params?.cookie?.dfid || params?.dfid || '-';
   const dataMap = {

@@ -1,6 +1,7 @@
 // 主题歌单
-const { clientver } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { clientver } = util;
   const dataMap = {
     platform: 'android',
     clientver,

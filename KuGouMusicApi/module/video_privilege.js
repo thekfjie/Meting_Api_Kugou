@@ -1,7 +1,8 @@
-const { cryptoMd5, signParamsKey, clientver, appid } = require('../util');
-// 获取视频特权
+const util = require('../util');
 
+// 鑾峰彇瑙嗛鐗规潈
 module.exports = (params, useAxios) => {
+  const { clientver, appid } = util;
   const dfid = params?.cookie?.dfid || '-';
   const mid = params?.cookie?.KUGOU_API_MID;
 

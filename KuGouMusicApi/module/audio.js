@@ -1,6 +1,7 @@
-const {  signParamsKey, appid, clientver } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { signParamsKey, appid, clientver } = util;
   const dateTime = Date.now();
   const data = (params?.hash || '').split(',').map((s) => ({ hash: s, audio_id: 0 }));
   const dfid = params?.cookie?.dfid || params?.dfid || '-';

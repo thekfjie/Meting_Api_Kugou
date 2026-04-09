@@ -1,9 +1,10 @@
 // 歌单
 // categoryid 0：推荐，11292：HI-RES
 
-const { appid, clientver, signParamsKey } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver, signParamsKey } = util;
   const dateTime = (Date.now() / 1000).toFixed(0);
   const specialRecommend = {
     withtag: params?.withtag || 1,

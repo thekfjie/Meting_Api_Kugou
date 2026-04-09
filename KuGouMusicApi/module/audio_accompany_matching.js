@@ -1,6 +1,7 @@
-const { cryptoMd5, appid } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { cryptoMd5, appid } = util;
 
   const dataMap = {
     isteen: 0,

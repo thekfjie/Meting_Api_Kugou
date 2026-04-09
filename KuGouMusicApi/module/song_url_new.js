@@ -1,5 +1,6 @@
-const { randomString, appid, cryptoMd5 } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { randomString, appid, cryptoMd5 } = util;
   // const quality = ['piano', 'acappella', 'subwoofer', 'ancient', 'dj', 'surnay'].includes(params.quality)
   //   ? `magic_${params?.quality}`
   //   : params.quality;

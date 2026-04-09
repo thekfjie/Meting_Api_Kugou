@@ -1,7 +1,8 @@
-const { cryptoMd5, signParamsKey, clientver, appid } = require('../util');
+const util = require('../util');
 // 获取歌手单曲
 
 module.exports = (params, useAxios) => {
+  const { signParamsKey, clientver, appid } = util;
   const clienttime = Math.floor(new Date().getTime() / 1000);
   const mid = params?.cookie?.KUGOU_API_MID;
   const dataMap = {

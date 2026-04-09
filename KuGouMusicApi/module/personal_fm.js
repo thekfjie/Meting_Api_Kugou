@@ -1,5 +1,6 @@
-const { signParamsKey, appid, clientver } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { signParamsKey, appid, clientver } = util;
   const userid = params?.cookie?.userid || params?.userid || 0;
   const token = params?.cookie?.token || params?.token || 0;
   const vip_type = params?.cookie?.vip_type || params?.vipType || 0;

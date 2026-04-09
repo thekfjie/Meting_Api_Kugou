@@ -1,6 +1,7 @@
-const { signatureAndroidParams, appid, clientver } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { signatureAndroidParams, appid, clientver } = util;
   const data = (params?.hash || '').split(',').map((s) => ({ album_id: 0, hash: s, album_audio_id: 0 }));
   (params?.album_id || '').split(',').forEach((s, index) => {
     if (index <= data.length - 1) {

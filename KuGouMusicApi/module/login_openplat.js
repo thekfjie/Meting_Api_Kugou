@@ -1,8 +1,7 @@
 // 开放平台登录
 const axios = require('axios');
-const { wx_appid, wx_secret, cryptoAesDecrypt, cryptoAesEncrypt, cryptoRSAEncrypt, wx_lite_appid, wx_lite_secret, isLite } = require('../util');
-const appid = isLite ? wx_lite_appid : wx_appid;
-const secret = isLite ? wx_lite_secret : wx_secret;
+const { cryptoAesDecrypt, cryptoAesEncrypt, cryptoRSAEncrypt } = require('../util');
+const { getRuntimeWxAppid, getRuntimeWxSecret, isLiteRuntime } = require('../util/runtime-context');
 
 let liteT2Key = 'fd14b35e3f81af3817a20ae7adae7020';
 let liteT2Iv = '17a20ae7adae7020';
@@ -10,6 +9,8 @@ let liteT1Key = '5e4ef500e9597fe004bd09a46d8add98';
 let liteT1Iv = '04bd09a46d8add98';
 
 const assetsToken = (code) => {
+  const appid = getRuntimeWxAppid();
+  const secret = getRuntimeWxSecret();
   return axios({
     url: 'https://api.weixin.qq.com/sns/oauth2/access_token',
     method: 'POST',
@@ -18,6 +19,7 @@ const assetsToken = (code) => {
 };
 
 module.exports = (params, useAxios) => {
+  const isLite = isLiteRuntime();
   const answer = { status: 500, body: {}, cookie: [] };
   return new Promise(async (resolve, reject) => {
     try {

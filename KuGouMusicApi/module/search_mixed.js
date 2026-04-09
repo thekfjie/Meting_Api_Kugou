@@ -1,15 +1,17 @@
-const { cryptoMd5 } = require('../util');
-// 综合搜索
+const util = require('../util');
+
+// 缁煎悎鎼滅储
 module.exports = (params, useAxios) => {
+  const { cryptoMd5, clientver } = util;
   const time = Date.now();
-  
+
   const dataMap = {
     ab_tag: 0,
     ability: 511,
     albumhide: 0,
     apiver: 22,
     area_code: 1,
-    clientver: 20125,
+    clientver,
     cursor: 0,
     is_gpay: 0,
     iscorrection: 1,

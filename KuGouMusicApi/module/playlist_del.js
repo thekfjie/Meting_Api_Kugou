@@ -1,7 +1,8 @@
-const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2, signParamsKey, clientver, appid } = require('../util');
+const util = require('../util');
 
 // 取消收藏歌单
 module.exports = (params, useAxios) => {
+  const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2, signParamsKey, clientver, appid } = util;
   const answer = { status: 500, body: {}, cookie: [] };
   return new Promise(async (resolve) => {
     try {

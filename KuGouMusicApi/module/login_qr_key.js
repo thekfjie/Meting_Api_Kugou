@@ -1,7 +1,9 @@
-const { srcappid, appid } = require('../util');
+const { getRuntimeAppid, getRuntimeSrcAppid } = require('../util/runtime-context');
 
 // 二维码 key 生成接口
 module.exports = (params, useAxios) => {
+  const appid = getRuntimeAppid();
+  const srcappid = getRuntimeSrcAppid();
   return useAxios({
     baseURL: 'https://login-user.kugou.com',
     url: '/v2/qrcode',

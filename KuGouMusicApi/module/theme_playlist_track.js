@@ -1,6 +1,7 @@
 // 获取主题歌单说有歌曲
-const { clientver } = require('../util');
+const util = require('../util');
 module.exports = (params, useAxios) => {
+  const { clientver } = util;
   const dataMap = {
     platform: 'android',
     clientver,

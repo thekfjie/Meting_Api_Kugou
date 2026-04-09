@@ -1,4 +1,4 @@
-const { apiver, appid, wx_appid, wx_lite_appid, wx_secret, wx_lite_secret, srcappid, clientver, liteAppid, liteClientver } = require('./config.json');
+const { apiver, wx_appid, wx_lite_appid, wx_secret, wx_lite_secret } = require('./config.json');
 const {
   cryptoAesDecrypt,
   cryptoAesEncrypt,
@@ -14,24 +14,14 @@ const {
 const { createRequest } = require('./request');
 const { signKey, signParams, signParamsKey, signCloudKey, signatureAndroidParams, signatureRegisterParams, signatureWebParams } = require('./helper');
 const { randomString, decodeLyrics, parseCookieString, cookieToJson, randomNumber, calculateMid } = require('./util');
+const { getRuntimeAppid, getRuntimeClientver, getRuntimeSrcAppid, isLiteRuntime } = require('./runtime-context');
 
-// 判断是否为概念版
-const isLite = process.env.platform === 'lite';
-const useAppid = isLite ? liteAppid : appid;
-const useClientver = isLite ? liteClientver : clientver;
-
-module.exports = {
+const exported = {
   apiver,
-  appid: useAppid,
-  // liteAppid,
-  // liteClientver,
   wx_appid,
   wx_lite_appid,
   wx_secret,
   wx_lite_secret,
-  srcappid,
-  clientver: useClientver,
-  isLite,
   cryptoAesDecrypt,
   cryptoAesEncrypt,
   cryptoMd5,
@@ -57,3 +47,12 @@ module.exports = {
   randomNumber,
   calculateMid
 };
+
+Object.defineProperties(exported, {
+  appid: { enumerable: true, get: () => getRuntimeAppid() },
+  clientver: { enumerable: true, get: () => getRuntimeClientver() },
+  srcappid: { enumerable: true, get: () => getRuntimeSrcAppid() },
+  isLite: { enumerable: true, get: () => isLiteRuntime() }
+});
+
+module.exports = exported;

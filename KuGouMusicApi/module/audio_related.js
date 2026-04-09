@@ -1,16 +1,17 @@
-const { cryptoMd5 } = require('../util');
+const util = require('../util');
 
 const sortType = { all: 1, hot: 2, new: 3 };
 
 // https://listkmrp3cdnretry.kugou.com/v3/album_audio/related
 module.exports = (params, useAxios) => {
+  const { cryptoMd5, appid, clientver, isLite } = util;
   const show_detail = Number(params.show_detail) === 0;
 
   let dataMap = {
     album_audio_id: Number(params.album_audio_id),
-    appid: 1005,
+    appid,
     area_code: 1,
-    clientver: 12329,
+    clientver,
   };
 
   if (!show_detail) {
@@ -27,7 +28,7 @@ module.exports = (params, useAxios) => {
 
   dataMap['version'] = 1;
 
-  const str = 'OIlwieks28dk2k092lksi2UIkp';
+  const str = isLite ? 'LnT6xpN3khm36zse0QzvmgTZ3waWdRSA' : 'OIlwieks28dk2k092lksi2UIkp';
   const paramsString = Object.keys(dataMap)
     .sort()
     .map((key) => `${key}=${typeof dataMap[key] === 'object' ? JSON.stringify(dataMap[key]) : dataMap[key]}`)

@@ -5,9 +5,10 @@
 // song_module_4 card_id_4: 小众宝藏佳作
 // song_module_6 card_id_6: vip专属推荐
 
-const { appid, clientver, cryptoMd5, signParamsKey } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver, signParamsKey } = util;
   const dfid = params?.dfid || params?.cookie?.dfid || '-';
   const fakem = '60f7ebf1f812edbac3c63a7310001701760f';
   const mid = params?.cookie?.KUGOU_API_MID;

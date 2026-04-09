@@ -1,11 +1,12 @@
 import config from '../config.js'
 import { parseKugouCookie } from './kugou-songinfo.js'
+import { buildKugouUpstreamRuntimeHeaders } from './kugou-upstream-runtime.js'
 
 const getBaseUrl = () => String(config.meting.kugou.upstream.url || '').trim().replace(/\/+$/, '')
 
 const normalizeText = (value) => String(value || '').trim()
 
-const request = async (path, { query = {}, cookie = '', method = 'GET', body = null } = {}) => {
+const request = async (path, { query = {}, cookie = '', method = 'GET', body = null, headers: extraHeaders = {} } = {}) => {
   const baseUrl = getBaseUrl()
   if (!baseUrl) return null
 
@@ -19,6 +20,7 @@ const request = async (path, { query = {}, cookie = '', method = 'GET', body = n
     Accept: 'application/json, text/plain, */*'
   }
   if (cookie) headers.Cookie = cookie
+  Object.assign(headers, extraHeaders || {})
 
   const init = {
     method,
@@ -101,8 +103,9 @@ export const mergeKugouSetCookies = mergeCookies
 export const kugouCookieMapToHeader = cookieMapToHeader
 export const buildKugouUpstreamAuthCookie = getAuthCookie
 
-export const fetchKugouQrLogin = async () => {
-  const keyResp = await request('/login/qr/key', { query: { timestamp: Date.now() } })
+export const fetchKugouQrLogin = async (pool = 'premium') => {
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool)
+  const keyResp = await request('/login/qr/key', { query: { timestamp: Date.now() }, headers })
   const key = keyResp?.body?.data?.qrcode
   if (!key) return null
 
@@ -111,7 +114,8 @@ export const fetchKugouQrLogin = async () => {
       key,
       qrimg: 1,
       timestamp: Date.now()
-    }
+    },
+    headers
   })
 
   return {
@@ -121,13 +125,17 @@ export const fetchKugouQrLogin = async () => {
   }
 }
 
-export const sendKugouCaptcha = async ({ mobile, cookieMap = {} }) => {
+export const sendKugouCaptcha = async ({ mobile, cookieMap = {}, pool = 'premium' }) => {
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool, {
+    cookie: cookieMapToHeader(cookieMap)
+  })
   const response = await request('/captcha/sent', {
     query: {
       mobile,
       timestamp: Date.now()
     },
-    cookie: cookieMapToHeader(cookieMap)
+    cookie: cookieMapToHeader(cookieMap),
+    headers
   })
 
   return {
@@ -139,14 +147,18 @@ export const sendKugouCaptcha = async ({ mobile, cookieMap = {} }) => {
   }
 }
 
-export const loginKugouCellphone = async ({ mobile, code, cookieMap = {} }) => {
+export const loginKugouCellphone = async ({ mobile, code, cookieMap = {}, pool = 'premium' }) => {
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool, {
+    cookie: cookieMapToHeader(cookieMap)
+  })
   const response = await request('/login/cellphone', {
     query: {
       mobile,
       code,
       timestamp: Date.now()
     },
-    cookie: cookieMapToHeader(cookieMap)
+    cookie: cookieMapToHeader(cookieMap),
+    headers
   })
 
   return {
@@ -158,12 +170,14 @@ export const loginKugouCellphone = async ({ mobile, code, cookieMap = {} }) => {
   }
 }
 
-export const checkKugouQrLogin = async (key) => {
+export const checkKugouQrLogin = async (key, pool = 'premium') => {
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool)
   const response = await request('/login/qr/check', {
     query: {
       key,
       timestamp: Date.now()
-    }
+    },
+    headers
   })
 
   const status = Number(response?.body?.data?.status || 0)
@@ -178,10 +192,12 @@ export const checkKugouQrLogin = async (key) => {
   }
 }
 
-export const refreshKugouLogin = async (cookie) => {
+export const refreshKugouLogin = async (cookie, pool = 'premium') => {
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   const response = await request('/login/token', {
     query: { timestamp: Date.now() },
-    cookie: getAuthCookie({ cookie })
+    cookie: getAuthCookie({ cookie }),
+    headers
   })
 
   return {
@@ -190,11 +206,12 @@ export const refreshKugouLogin = async (cookie) => {
   }
 }
 
-export const fetchKugouLoginProfile = async (cookie) => {
+export const fetchKugouLoginProfile = async (cookie, pool = 'premium') => {
   const authCookie = getAuthCookie({ cookie })
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   const [detailResp, vipResp] = await Promise.all([
-    request('/user/detail', { query: { timestamp: Date.now() }, cookie: authCookie }),
-    request('/user/vip/detail', { query: { timestamp: Date.now() }, cookie: authCookie })
+    request('/user/detail', { query: { timestamp: Date.now() }, cookie: authCookie, headers }),
+    request('/user/vip/detail', { query: { timestamp: Date.now() }, cookie: authCookie, headers })
   ])
 
   return {
@@ -203,8 +220,9 @@ export const fetchKugouLoginProfile = async (cookie) => {
   }
 }
 
-export const registerKugouDevice = async () => {
-  const response = await request('/register/dev', { query: { timestamp: Date.now() } })
+export const registerKugouDevice = async (pool = 'premium') => {
+  const headers = await buildKugouUpstreamRuntimeHeaders(pool)
+  const response = await request('/register/dev', { query: { timestamp: Date.now() }, headers })
   return {
     body: response?.body || null,
     cookieMap: mergeCookies(response?.cookies || [])

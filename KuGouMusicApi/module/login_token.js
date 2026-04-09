@@ -1,5 +1,6 @@
 // 刷新登录
-const { cryptoAesDecrypt, cryptoAesEncrypt, cryptoRSAEncrypt, isLite } = require('../util');
+const { cryptoAesDecrypt, cryptoAesEncrypt, cryptoRSAEncrypt } = require('../util');
+const { isLiteRuntime } = require('../util/runtime-context');
 
 const key = '90b8382a1bb4ccdcf063102053fd75b8';
 const iv = 'f063102053fd75b8';
@@ -13,6 +14,7 @@ let liteT1Key = '5e4ef500e9597fe004bd09a46d8add98';
 let liteT1Iv = '04bd09a46d8add98';
 
 module.exports = (params, useAxios) => {
+  const isLite = isLiteRuntime();
   const dateNow = Date.now();
   const token = params?.token || params?.cookie?.token || '';
   const userid = params?.userid || params?.cookie?.userid || '0';

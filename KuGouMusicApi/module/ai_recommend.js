@@ -1,6 +1,7 @@
-const { appid, clientver, signParamsKey, cryptoMd5 } = require('../util');
+const util = require('../util');
 
 module.exports = (params, useAxios) => {
+  const { appid, clientver, signParamsKey } = util;
   const userid = params?.userid || params?.cookie?.userid || 0;
   const mid = params?.cookie?.KUGOU_API_MID; // 可以自定义
   const clienttime = Date.now();

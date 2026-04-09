@@ -1,7 +1,8 @@
-const { clientver, appid, cryptoMd5, signParamsKey } = require('../util');
+const util = require('../util');
 
 
 module.exports = (params, useAxios) => {
+  const { clientver, appid, signParamsKey } = util;
   const dateTime = Date.now();
   const data = (params?.album_id || '').split(',').map((s) => ({ album_id: s, album_name: '', author_name: '' }));
   const dfid = params?.cookie?.dfid || params?.dfid || '-';
