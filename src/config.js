@@ -39,6 +39,12 @@ export default {
     kugou: {
       premiumKey: process.env.METING_KUGOU_PREMIUM_KEY || '',
       blogDataDir: process.env.BLOG_DATA_DIR || './blog-data',
+      cache: {
+        defaultTtlMs: toNumber(process.env.METING_CACHE_DEFAULT_MS, 60 * 60 * 1000),
+        urlTtlMs: toNumber(process.env.METING_KUGOU_URL_CACHE_MS, 10 * 60 * 1000),
+        sharePlaylistTtlMs: toNumber(process.env.METING_KUGOU_SHARE_PLAYLIST_CACHE_MS, 30 * 60 * 1000),
+        blogWhitelistDataTtlMs: toNumber(process.env.METING_KUGOU_BLOG_WHITELIST_CACHE_MS, 12 * 60 * 60 * 1000)
+      },
       pools: {
         premium: {
           platform: normalizePlatform(process.env.METING_KUGOU_PREMIUM_PLATFORM || 'default'),
@@ -51,8 +57,13 @@ export default {
       },
       upstream: {
         url: process.env.METING_KUGOU_UPSTREAM_URL || '',
+        defaultUrl: process.env.METING_KUGOU_UPSTREAM_DEFAULT_URL || process.env.METING_KUGOU_UPSTREAM_URL || '',
+        liteUrl: process.env.METING_KUGOU_UPSTREAM_LITE_URL || process.env.METING_KUGOU_UPSTREAM_URL || '',
         timeoutMs: toNumber(process.env.METING_KUGOU_UPSTREAM_TIMEOUT_MS, 8000),
-        runtimeSecret: process.env.METING_KUGOU_UPSTREAM_RUNTIME_SECRET || ''
+        processNames: {
+          default: process.env.METING_KUGOU_UPSTREAM_DEFAULT_PM2_NAME || 'kugou-upstream',
+          lite: process.env.METING_KUGOU_UPSTREAM_LITE_PM2_NAME || 'kugou-upstream-lite'
+        }
       },
       scheduler: {
         checkIntervalMs: toNumber(process.env.METING_KUGOU_SCHEDULER_INTERVAL_MS, 60 * 1000),

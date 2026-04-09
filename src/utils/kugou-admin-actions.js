@@ -216,7 +216,7 @@ export const syncKugouPoolProfile = async (pool, { record = true } = {}) => {
   const normalizedPool = normalizePool(pool)
   const at = nowIso()
 
-  if (!hasKugouUpstreamAuth()) {
+  if (!hasKugouUpstreamAuth(normalizedPool)) {
     return {
       ok: false,
       skipped: true,
@@ -324,7 +324,7 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
   const at = nowIso()
   const sourceInfo = await inspectCookieSource('kugou', normalizedPool)
 
-  if (!hasKugouUpstreamAuth()) {
+  if (!hasKugouUpstreamAuth(normalizedPool)) {
     const result = buildErrorResult({
       action: 'refresh',
       pool: normalizedPool,
@@ -465,7 +465,7 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
     return result
   }
 
-  if (!hasKugouUpstreamAuth()) {
+  if (!hasKugouUpstreamAuth(normalizedPool)) {
     const result = buildErrorResult({
       action: 'claim',
       pool: normalizedPool,

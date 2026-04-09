@@ -1,4 +1,19 @@
 # KuGouMusicApi Upstream
+## Current Deployment Note
+
+This upstream is now expected to run as two PM2 processes in the integration repo:
+
+- `kugou-upstream` on the regular/default platform, typically `127.0.0.1:3100`
+- `kugou-upstream-lite` on the lite/concept platform, typically `127.0.0.1:3101`
+
+The root service should point to them with:
+
+```bash
+METING_KUGOU_UPSTREAM_DEFAULT_URL=http://127.0.0.1:3100
+METING_KUGOU_UPSTREAM_LITE_URL=http://127.0.0.1:3101
+```
+
+If only `METING_KUGOU_UPSTREAM_URL` is configured, both pools will share one upstream, which is no longer the preferred regular + lite deployment mode.
 
 这个目录不是原始独立仓库说明页，而是当前整合仓库里的 upstream 子项目说明。
 

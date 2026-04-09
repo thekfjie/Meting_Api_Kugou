@@ -3,7 +3,6 @@ import {
   mergeKugouSetCookies,
   requestKugouUpstream
 } from './kugou-upstream-auth.js'
-import { buildKugouUpstreamRuntimeHeaders } from './kugou-upstream-runtime.js'
 
 const normalizeText = (value) => String(value || '').trim()
 
@@ -48,39 +47,36 @@ const buildResult = (response) => {
 }
 
 export const performKugouLiteVipListen = async (cookie, pool = 'general') => {
-  const headers = await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   const response = await requestKugouUpstream('/youth/listen/song', {
     query: {
       timestamp: Date.now()
     },
     cookie: buildKugouUpstreamAuthCookie({ cookie }),
-    headers
+    pool
   })
 
   return buildResult(response)
 }
 
 export const performKugouLiteVipClaim = async (cookie, pool = 'general') => {
-  const headers = await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   const response = await requestKugouUpstream('/youth/vip', {
     query: {
       timestamp: Date.now()
     },
     cookie: buildKugouUpstreamAuthCookie({ cookie }),
-    headers
+    pool
   })
 
   return buildResult(response)
 }
 
 export const fetchKugouVipDetail = async (cookie, pool = 'general') => {
-  const headers = await buildKugouUpstreamRuntimeHeaders(pool, { cookie })
   const response = await requestKugouUpstream('/user/vip/detail', {
     query: {
       timestamp: Date.now()
     },
     cookie: buildKugouUpstreamAuthCookie({ cookie }),
-    headers
+    pool
   })
 
   return buildResult(response)

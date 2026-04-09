@@ -277,11 +277,12 @@ const probeCookiePool = async (pool) => {
     }
   }
 
-  const basicData = hasKugouUpstream()
+  const basicData = hasKugouUpstream(pool)
     ? await getKugouUpstreamData({
       type: 'song',
       id: config.meting.kugou.status.freeHash,
-      cookie
+      cookie,
+      pool
     })
     : await getKugouSonginfo({
       hash: config.meting.kugou.status.freeHash,
@@ -305,7 +306,7 @@ const probeCookiePool = async (pool) => {
       vip: null,
       vipState: 'untested',
       routeEligible: false,
-      statusReason: hasKugouUpstream() ? 'upstream-basic-probe-failed' : 'songinfo-probe-failed',
+      statusReason: hasKugouUpstream(pool) ? 'upstream-basic-probe-failed' : 'songinfo-probe-failed',
       vipReason: 'not-tested'
     }
   }
@@ -324,22 +325,24 @@ const probeCookiePool = async (pool) => {
     }
   }
 
-  const vipData = hasKugouUpstream()
+  const vipData = hasKugouUpstream(pool)
     ? await getKugouUpstreamData({
       type: 'song',
       id: config.meting.kugou.status.vipHash,
-      cookie
+      cookie,
+      pool
     })
     : await getKugouSonginfo({
       hash: config.meting.kugou.status.vipHash,
       cookie
     })
 
-  const resolvedUrl = hasKugouUpstream()
+  const resolvedUrl = hasKugouUpstream(pool)
     ? await getKugouUpstreamData({
       type: 'url',
       id: vipData?.url_id || vipData?.hash || config.meting.kugou.status.vipHash,
-      cookie
+      cookie,
+      pool
     })
     : await getKugouResolvedUrl({
       hash: config.meting.kugou.status.vipHash,

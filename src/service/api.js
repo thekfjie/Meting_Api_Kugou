@@ -12,7 +12,8 @@ import {
 } from '../utils/kugou-songinfo.js'
 import {
   extractKugouHashFromResourceId,
-  getKugouUpstreamData
+  getKugouUpstreamData,
+  hasKugouUpstream
 } from '../utils/kugou-upstream.js'
 import { recordKugouUpstreamTrace } from '../utils/kugou-upstream-status.js'
 import { recordRequestSummary } from '../utils/request-summary-log.js'
@@ -45,6 +46,22 @@ const METING_METHODS = {
   pic: 'pic'
 }
 const BLOG_PLAYLIST_SOURCE = 'blog-playlist'
+
+const getResponseCacheTtl = ({ server, type, isKugouSharePlaylist, isBlogPlaylistWhitelistedTrack }) => {
+  if (server === 'kugou' && isBlogPlaylistWhitelistedTrack) {
+    return config.meting.kugou.cache.blogWhitelistDataTtlMs
+  }
+
+  if (isKugouSharePlaylist) {
+    return config.meting.kugou.cache.sharePlaylistTtlMs
+  }
+
+  if (type === 'url') {
+    return config.meting.kugou.cache.urlTtlMs
+  }
+
+  return config.meting.kugou.cache.defaultTtlMs
+}
 
 const summarizeAuthors = (item) => {
   if (typeof item?.author === 'string' && item.author) return item.author
@@ -144,6 +161,7 @@ export default async (c) => {
     type,
     hash: kugouHashId
   })
+  const isBlogPlaylistWhitelistedTrack = server === 'kugou' && ['song', 'lrc', 'pic'].includes(type) && isHashInBlogPlaylist(kugouHashId)
   const kugouPool = kugouRoute.pool
   let effectiveKugouPool = kugouPool
   let fallbackNotice = ''
@@ -298,9 +316,12 @@ export default async (c) => {
       payload: data,
       upstreamStatus
     }, {
-      ttl: isKugouSharePlaylist
-        ? 1000 * 60 * 30
-        : (type === 'url' ? 1000 * 60 * 10 : 1000 * 60 * 60)
+      ttl: getResponseCacheTtl({
+        server,
+        type,
+        isKugouSharePlaylist,
+        isBlogPlaylistWhitelistedTrack
+      })
     })
   }
 
@@ -315,7 +336,7 @@ export default async (c) => {
       status: upstreamStatus,
       type,
       pool: effectiveKugouPool,
-      configured: Boolean(config.meting.kugou.upstream.url),
+      configured: hasKugouUpstream(effectiveKugouPool),
       attempted: upstreamAttempted,
       cacheHit,
       reason: upstreamAttempted

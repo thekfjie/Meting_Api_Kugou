@@ -1,4 +1,20 @@
 # Meting-API Integration Repo
+## Current Deployment Note
+
+The recommended Kugou setup is now:
+
+- `kugou-upstream` for regular/default mode
+- `kugou-upstream-lite` for lite/concept mode
+- `meting-api` routes `premium/general` to the matching upstream by pool platform
+
+Preferred root env vars:
+
+```bash
+METING_KUGOU_UPSTREAM_DEFAULT_URL=http://127.0.0.1:3100
+METING_KUGOU_UPSTREAM_LITE_URL=http://127.0.0.1:3101
+```
+
+`METING_KUGOU_UPSTREAM_URL` is still accepted as a legacy fallback, but it is no longer the recommended production setup when regular + lite need to run together.
 
 这个仓库不是单一服务，而是一个整合仓库：
 
