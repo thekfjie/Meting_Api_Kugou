@@ -1,4 +1,4 @@
-﻿import { execFile } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -105,13 +105,7 @@ const monitor = async (force = false) => {
   })
 }
 
-const upstreamPlatform = async () => {
-  try {
-    const content = await readFile(resolve(process.cwd(), 'KuGouMusicApi/.env'), 'utf8')
-    const line = content.split(/\r?\n/).find(item => item.trim().startsWith('platform=')) || ''
-    return platformMode(line.split('=').slice(1).join('='))
-  } catch { return 'default' }
-}
+const upstreamPlatformSummary = async () => listKugouPoolPlatforms().map(item => `${item.pool}=${platformDisplayLabel(item.platform)}`).join(' / ')
 
 const qrState = async () => getKugouAdminSession('qrLogin')
 const setQrState = async (v) => setKugouAdminSession('qrLogin', v ? { ...v, expiresAt: Date.now() + 5 * 60 * 1000 } : null)
