@@ -26,6 +26,7 @@ import {
   recordKugouBlocked,
   recordKugouRequest
 } from '../utils/kugou-runtime.js'
+import { isHashInBlogPlaylist } from '../utils/blog-playlist-whitelist.js'
 import { LRUCache } from 'lru-cache'
 
 const cache = new LRUCache({
@@ -132,11 +133,16 @@ export default async (c) => {
 
   const referrer = c.req.header('referer')
   const allowCookie = isAllowedHost(referrer)
+  const kugouHashId = server === 'kugou'
+    ? extractKugouHashFromResourceId(id)
+    : id
   const kugouRoute = resolveKugouPool({
     server,
     referrer,
     allowCookie,
-    requestKey
+    requestKey,
+    type,
+    hash: kugouHashId
   })
   const kugouPool = kugouRoute.pool
   let effectiveKugouPool = kugouPool
@@ -152,9 +158,7 @@ export default async (c) => {
   let cacheHit = cacheEntry !== undefined
   let upstreamStatus = cacheEntry?.__metingCache ? (cacheEntry.upstreamStatus || 'miss') : 'miss'
   let upstreamAttempted = false
-  const kugouHashId = server === 'kugou'
-    ? extractKugouHashFromResourceId(id)
-    : id
+
   if (server === 'kugou') {
     const quotaExempt = shouldExemptKugouQuota({
       server,
@@ -233,7 +237,8 @@ export default async (c) => {
       const upstreamData = await getKugouUpstreamData({
         type,
         id,
-        cookie
+        cookie,
+        pool: effectiveKugouPool
       })
       if (upstreamData != null) {
         data = upstreamData
@@ -477,11 +482,14 @@ const hasValidKugouPremiumKey = (requestKey) => {
   return timingSafeEqual(left, right)
 }
 
-const resolveKugouPool = ({ server, referrer, allowCookie, requestKey }) => {
+const resolveKugouPool = ({ server, referrer, allowCookie, requestKey, type, hash }) => {
   if (server !== 'kugou') return { pool: 'default', reason: 'default' }
   if (hasValidKugouPremiumKey(requestKey)) return { pool: 'premium', reason: 'key' }
   if (referrer && config.meting.cookie.allowHosts.length > 0 && allowCookie) {
-    return { pool: 'premium', reason: 'referrer' }
+    if (type !== 'playlist' && isHashInBlogPlaylist(hash)) {
+      return { pool: 'premium', reason: 'referrer' }
+    }
+    return { pool: 'general', reason: 'referrer-non-whitelist' }
   }
   return { pool: 'general', reason: 'fallback' }
 }

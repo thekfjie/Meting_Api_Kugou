@@ -12,6 +12,11 @@ const toNumber = (value, fallback) => {
   return Number.isNaN(parsed) ? fallback : parsed
 }
 
+const normalizePlatform = value => {
+  const normalized = String(value || '').trim().replace(/^['"]+|['"]+$/g, '').toLowerCase()
+  return normalized === 'lite' ? 'lite' : 'default'
+}
+
 export default {
   http: {
     prefix: process.env.HTTP_PREFIX || '',
@@ -20,8 +25,7 @@ export default {
   admin: {
     password: process.env.ADMIN_PASSWORD || '',
     sessionSecret: process.env.ADMIN_SESSION_SECRET || process.env.METING_TOKEN || 'token',
-    sessionTtlMs: toNumber(process.env.ADMIN_SESSION_TTL_MS, 12 * 60 * 60 * 1000),
-    kugouLazyRefreshMs: toNumber(process.env.METING_KUGOU_ADMIN_LAZY_REFRESH_MS, 6 * 60 * 60 * 1000)
+    sessionTtlMs: toNumber(process.env.ADMIN_SESSION_TTL_MS, 12 * 60 * 60 * 1000)
   },
   https: {
     enabled: toBoolean(process.env.HTTPS_ENABLED),
@@ -34,9 +38,29 @@ export default {
     token: process.env.METING_TOKEN || 'token',
     kugou: {
       premiumKey: process.env.METING_KUGOU_PREMIUM_KEY || '',
+      blogDataDir: process.env.BLOG_DATA_DIR || './blog-data',
+      pools: {
+        premium: {
+          platform: normalizePlatform(process.env.METING_KUGOU_PREMIUM_PLATFORM || 'default'),
+          autoClaim: toBoolean(process.env.METING_KUGOU_PREMIUM_AUTO_CLAIM)
+        },
+        general: {
+          platform: normalizePlatform(process.env.METING_KUGOU_GENERAL_PLATFORM || 'lite'),
+          autoClaim: toBoolean(process.env.METING_KUGOU_GENERAL_AUTO_CLAIM || '1')
+        }
+      },
       upstream: {
         url: process.env.METING_KUGOU_UPSTREAM_URL || '',
-        timeoutMs: toNumber(process.env.METING_KUGOU_UPSTREAM_TIMEOUT_MS, 8000)
+        timeoutMs: toNumber(process.env.METING_KUGOU_UPSTREAM_TIMEOUT_MS, 8000),
+        runtimeSecret: process.env.METING_KUGOU_UPSTREAM_RUNTIME_SECRET || ''
+      },
+      scheduler: {
+        checkIntervalMs: toNumber(process.env.METING_KUGOU_SCHEDULER_INTERVAL_MS, 60 * 1000),
+        refreshBaseMs: toNumber(process.env.METING_KUGOU_AUTO_REFRESH_BASE_MS, 6 * 60 * 60 * 1000),
+        refreshJitterMs: toNumber(process.env.METING_KUGOU_AUTO_REFRESH_JITTER_MS, 60 * 60 * 1000),
+        refreshRetryMs: toNumber(process.env.METING_KUGOU_AUTO_REFRESH_RETRY_MS, 30 * 60 * 1000),
+        claimWindowStartHour: toNumber(process.env.METING_KUGOU_AUTO_CLAIM_START_HOUR, 9),
+        claimWindowEndHour: toNumber(process.env.METING_KUGOU_AUTO_CLAIM_END_HOUR, 21)
       },
       status: {
         freeHash: process.env.METING_KUGOU_STATUS_FREE_HASH || '83995C1F356E6FC35A14D27940882F88',
