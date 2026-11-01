@@ -1,58 +1,8 @@
-import config from '../config.js'
 import { parseKugouCookie } from './kugou-songinfo.js'
-import { getKugouPoolUpstreamUrl, hasAnyKugouUpstream, hasKugouPoolUpstream } from './kugou-upstream-runtime.js'
-
-const getBaseUrl = (pool = 'premium') => String(getKugouPoolUpstreamUrl(pool) || '').trim().replace(/\/+$/, '')
+import { hasAnyKugouUpstream, hasKugouPoolUpstream } from './kugou-upstream-runtime.js'
+import { requestKugouUpstream as request } from './kugou-upstream-client.js'
 
 const normalizeText = (value) => String(value || '').trim()
-
-const request = async (path, { query = {}, cookie = '', method = 'GET', body = null, headers: extraHeaders = {}, pool = 'premium' } = {}) => {
-  const baseUrl = getBaseUrl(pool)
-  if (!baseUrl) return null
-
-  const url = new URL(`${baseUrl}${path}`)
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined || value === null || value === '') continue
-    url.searchParams.set(key, String(value))
-  }
-
-  const headers = {
-    Accept: 'application/json, text/plain, */*'
-  }
-  if (cookie) headers.Cookie = cookie
-  Object.assign(headers, extraHeaders || {})
-
-  const init = {
-    method,
-    headers,
-    redirect: 'follow',
-    signal: AbortSignal.timeout(config.meting.kugou.upstream.timeoutMs)
-  }
-
-  if (body !== null) {
-    headers['Content-Type'] = 'application/json; charset=utf-8'
-    init.body = JSON.stringify(body)
-  }
-
-  const response = await fetch(url, init)
-
-  const setCookie = response.headers.getSetCookie ? response.headers.getSetCookie() : []
-  const text = await response.text()
-  let responseBody = null
-
-  try {
-    responseBody = JSON.parse(text)
-  } catch (error) {
-    responseBody = null
-  }
-
-  return {
-    ok: response.ok,
-    body: responseBody,
-    text,
-    cookies: setCookie
-  }
-}
 
 const mergeCookies = (cookies = []) => {
   const out = {}

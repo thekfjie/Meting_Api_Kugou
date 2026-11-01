@@ -10,3 +10,6 @@
 !/package-lock.json
 !/index.js
 !/main.js
+!/docs
+**/*.test.js
+**/*.spec.js

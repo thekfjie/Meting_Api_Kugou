@@ -1,0 +1,55 @@
+services:
+  meting-api:
+    build:
+      context: .
+      target: api
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+    image: meting-api:local
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HTTP_PORT: '3000'
+      METING_KUGOU_UPSTREAM_DEFAULT_URL: http://kugou-upstream:3100
+      METING_KUGOU_UPSTREAM_LITE_URL: http://kugou-upstream-lite:3100
+    ports:
+      - '127.0.0.1:${METING_BIND_PORT:-3000}:3000'
+    volumes:
+      - cookies:/app/cookie
+      - data:/app/data
+    depends_on:
+      kugou-upstream:
+        condition: service_healthy
+      kugou-upstream-lite:
+        condition: service_healthy
+
+  kugou-upstream:
+    build:
+      context: .
+      target: upstream
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+    image: meting-kugou-upstream:local
+    init: true
+    restart: unless-stopped
+    environment:
+      platform: default
+      KUGOU_API_GUID: ${KUGOU_API_DEFAULT_GUID:-}
+      KUGOU_API_DEV: ${KUGOU_API_DEFAULT_DEV:-}
+      KUGOU_API_MAC: ${KUGOU_API_DEFAULT_MAC:-}
+
+  kugou-upstream-lite:
+    image: meting-kugou-upstream:local
+    pull_policy: never
+    init: true
+    restart: unless-stopped
+    environment:
+      platform: lite
+      KUGOU_API_GUID: ${KUGOU_API_LITE_GUID:-}
+      KUGOU_API_DEV: ${KUGOU_API_LITE_DEV:-}
+      KUGOU_API_MAC: ${KUGOU_API_LITE_MAC:-}
+
+volumes:
+  cookies:
+  data:

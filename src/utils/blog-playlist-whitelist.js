@@ -37,7 +37,7 @@ let watcher = null
 const startWatcher = async () => {
   try {
     const dataDir = getDataDir()
-    watcher = watch(dataDir)
+    watcher = watch(dataDir, { persistent: false })
     for await (const event of watcher) {
       if (event.filename && DATA_FILES.some(f => event.filename.endsWith(f))) {
         await loadHashes()

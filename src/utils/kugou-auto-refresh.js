@@ -116,3 +116,8 @@ export const startKugouAutoRefreshScheduler = () => {
   tick().catch(() => {})
   logger.info({ intervalMs }, 'Kugou scheduler started')
 }
+
+export const stopKugouAutoRefreshScheduler = () => {
+  clearInterval(timer)
+  timer = null
+}

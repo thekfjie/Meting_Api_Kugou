@@ -2,6 +2,10 @@ import pino from 'pino'
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'debug',
+  redact: {
+    paths: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'],
+    censor: '[redacted]'
+  },
   transport: process.env.NODE_ENV !== 'production'
     ? { target: 'pino-pretty' }
     : undefined

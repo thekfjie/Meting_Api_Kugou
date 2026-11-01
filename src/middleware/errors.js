@@ -3,8 +3,8 @@ import { logger as baseLogger } from './logger.js'
 const sanitizeQuery = (query) => {
   if (!query || typeof query !== 'object') return query
   const next = { ...query }
-  if (typeof next.key === 'string' && next.key) {
-    next.key = '[redacted]'
+  for (const key of ['key', 'token', 'auth', 'cookie', 'password', 'code', 'mobile']) {
+    if (next[key]) next[key] = '[redacted]'
   }
   return next
 }

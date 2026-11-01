@@ -57,7 +57,7 @@ const readCookieFromFiles = async (fileNames = []) => {
 
 async function startWatcher () {
   try {
-    watcher = watch(cookieDir)
+    watcher = watch(cookieDir, { persistent: false })
     for await (const event of watcher) {
       if (event.filename) {
         cookieCache.clear()

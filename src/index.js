@@ -1,97 +1,55 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
 import { createServer } from 'node:https'
 import { readFileSync } from 'node:fs'
-import { requestLogger, logger } from './middleware/logger.js'
-import errors from './middleware/errors.js'
-import apiService from './service/api.js'
-import adminService from './service/admin.js'
-import demoService from './service/demo.js'
-import kugouMonitorService from './service/kugou-monitor.js'
+import { createApp } from './app.js'
+import { logger } from './middleware/logger.js'
 import config from './config.js'
-import { startKugouAutoRefreshScheduler } from './utils/kugou-auto-refresh.js'
+import { startKugouAutoRefreshScheduler, stopKugouAutoRefreshScheduler } from './utils/kugou-auto-refresh.js'
 
-const app = new Hono()
-  .use(requestLogger)
-  .use(cors())
-  .use(errors)
-
-app.get(`${config.http.prefix}/api`, apiService)
-app.get(`${config.http.prefix}/music`, apiService)
-app.get(`${config.http.prefix}/music/manage`, adminService)
-app.get(`${config.http.prefix}/music/manage/login`, adminService)
-app.get(`${config.http.prefix}/music/manage/monitor`, adminService)
-app.post(`${config.http.prefix}/music/manage/login`, adminService)
-app.post(`${config.http.prefix}/music/manage/logout`, adminService)
-app.post(`${config.http.prefix}/music/manage/pm2`, adminService)
-app.post(`${config.http.prefix}/music/manage/pool/clear`, adminService)
-app.post(`${config.http.prefix}/music/manage/pool/copy`, adminService)
-app.post(`${config.http.prefix}/music/manage/pool/move`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/qr/start`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/qr/check`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/qr/apply`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/refresh`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/status/refresh`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/vip/claim`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/vip/claim-all`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/captcha/send`, adminService)
-app.post(`${config.http.prefix}/music/manage/kugou/captcha/login`, adminService)
-app.get(`${config.http.prefix}/api/manage`, adminService)
-app.get(`${config.http.prefix}/api/manage/login`, adminService)
-app.get(`${config.http.prefix}/api/manage/monitor`, adminService)
-app.post(`${config.http.prefix}/api/manage/login`, adminService)
-app.post(`${config.http.prefix}/api/manage/logout`, adminService)
-app.post(`${config.http.prefix}/api/manage/pm2`, adminService)
-app.post(`${config.http.prefix}/api/manage/pool/clear`, adminService)
-app.post(`${config.http.prefix}/api/manage/pool/copy`, adminService)
-app.post(`${config.http.prefix}/api/manage/pool/move`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/qr/start`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/qr/check`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/qr/apply`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/refresh`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/status/refresh`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/vip/claim`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/vip/claim-all`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/captcha/send`, adminService)
-app.post(`${config.http.prefix}/api/manage/kugou/captcha/login`, adminService)
-app.get(`${config.http.prefix}/demo`, demoService)
-app.get(`${config.http.prefix}/api/monitor/kugou`, kugouMonitorService)
-app.get(`${config.http.prefix}/monitor/kugou`, kugouMonitorService)
-
-serve({
-  fetch: app.fetch,
-  port: config.http.port
-})
-
-logger.info({ port: config.http.port }, 'HTTP server started')
-startKugouAutoRefreshScheduler()
+const app = createApp()
+const servers = []
+let tlsOptions
 
 if (config.https.enabled) {
   if (!config.https.keyPath || !config.https.certPath) {
-    logger.error('HTTPS_ENABLED is true but SSL_KEY_PATH or SSL_CERT_PATH is not configured')
+    logger.error('HTTPS_ENABLED requires SSL_KEY_PATH and SSL_CERT_PATH')
     process.exit(1)
   }
-
-  let key
-  let cert
-
   try {
-    key = readFileSync(config.https.keyPath)
-    cert = readFileSync(config.https.certPath)
+    tlsOptions = {
+      key: readFileSync(config.https.keyPath),
+      cert: readFileSync(config.https.certPath)
+    }
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to read SSL certificate files')
     process.exit(1)
   }
+}
 
-  serve({
+servers.push(serve({ fetch: app.fetch, port: config.http.port }))
+logger.info({ port: config.http.port }, 'HTTP server started')
+
+if (tlsOptions) {
+  servers.push(serve({
     fetch: app.fetch,
     port: config.https.port,
     createServer,
-    serverOptions: { key, cert }
-  })
-
+    serverOptions: tlsOptions
+  }))
   logger.info({ port: config.https.port }, 'HTTPS server started')
-} else {
-  logger.info('HTTPS server is disabled')
 }
+startKugouAutoRefreshScheduler()
+
+let stopping = false
+const shutdown = () => {
+  if (stopping) return
+  stopping = true
+  stopKugouAutoRefreshScheduler()
+  for (const server of servers) server.close()
+  const deadline = setTimeout(() => {
+    for (const server of servers) server.closeAllConnections()
+  }, 10_000)
+  deadline.unref()
+}
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)

@@ -1,2 +1,21 @@
-node_modules/
-.env
+# Only runtime sources and lockfiles may enter the build context.
+**
+!package.json
+!package-lock.json
+!src/
+!src/**
+!KuGouMusicApi/
+!KuGouMusicApi/package.json
+!KuGouMusicApi/package-lock.json
+!KuGouMusicApi/app.js
+!KuGouMusicApi/server.js
+!KuGouMusicApi/module/
+!KuGouMusicApi/module/**
+!KuGouMusicApi/util/
+!KuGouMusicApi/util/**
+!KuGouMusicApi/public/
+!KuGouMusicApi/public/**
+!KuGouMusicApi/docs/
+!KuGouMusicApi/docs/**
+**/*.test.js
+**/*.spec.js

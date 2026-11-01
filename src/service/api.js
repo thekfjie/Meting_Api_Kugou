@@ -11,6 +11,7 @@ import {
   getKugouPublicSong
 } from '../utils/kugou-songinfo.js'
 import {
+  canUseKugouUpstream,
   extractKugouHashFromResourceId,
   getKugouUpstreamData,
   hasKugouUpstream
@@ -29,6 +30,7 @@ import {
 } from '../utils/kugou-runtime.js'
 import { isHashInBlogPlaylist } from '../utils/blog-playlist-whitelist.js'
 import { LRUCache } from 'lru-cache'
+import { streamKugouAudio } from '../utils/kugou-audio-stream.js'
 
 const cache = new LRUCache({
   max: 1000,
@@ -239,6 +241,7 @@ export default async (c) => {
     }
   }
 
+  c.header('x-cache', cacheHit ? 'hit' : 'miss')
   if (data === undefined) {
     c.header('x-cache', 'miss')
     const meting = new Meting(server)
@@ -250,7 +253,7 @@ export default async (c) => {
       : ''
     if (cookie) meting.cookie(cookie)
 
-    if (server === 'kugou' && effectiveKugouPool !== 'internal' && !isKugouSharePlaylist) {
+    if (server === 'kugou' && effectiveKugouPool !== 'internal' && !isKugouSharePlaylist && canUseKugouUpstream(type, effectiveKugouPool)) {
       upstreamAttempted = true
       const upstreamData = await getKugouUpstreamData({
         type,
@@ -303,6 +306,9 @@ export default async (c) => {
         } catch (error) {
           throw new HTTPException(500, { message: '上游 API 调用失败' })
         }
+        if (meting.error) {
+          throw new HTTPException(502, { message: '上游 API 请求失败' })
+        }
 
         try {
           data = JSON.parse(response)
@@ -310,6 +316,9 @@ export default async (c) => {
           throw new HTTPException(500, { message: '上游 API 返回格式异常' })
         }
       }
+    }
+    if (data === null || typeof data !== 'object' || (!Array.isArray(data) && data.error)) {
+      throw new HTTPException(502, { message: '上游 API 返回数据异常' })
     }
     cache.set(cacheKey, {
       __metingCache: true,
@@ -359,6 +368,16 @@ export default async (c) => {
     let url = data.url
     if (!url) {
       return c.body(null, 404)
+    }
+    if (server === 'kugou') {
+      if (c.get('streamAudio')) return streamKugouAudio(c, url)
+      if (url.startsWith('http://')) {
+        const streamUrl = new URL(buildResourceUrl({
+          server, type, id, requestKey, requestSource, kugouPool: effectiveKugouPool
+        }))
+        streamUrl.pathname += '/stream'
+        return c.redirect(streamUrl.toString())
+      }
     }
     if (server === 'netease') {
       url = url
@@ -422,8 +441,7 @@ export default async (c) => {
     console.log('================================================')
   }
 
-  // 🛡️ 智能兼容防弹装甲 🛡️
-  const safeData = Array.isArray(data) ? data : (data.error ? [] : [data])
+  const safeData = Array.isArray(data) ? data : [data]
   recordApiSummary({
     c,
     server,
@@ -451,15 +469,11 @@ export default async (c) => {
     }
 
     // 兼容 ID 格式：标准用 url_id，酷狗原始用 hash
-    const urlId = server === 'kugou'
-      ? (x.url_id || x.hash || id)
-      : (x.url_id || x.hash || id)
+    const urlId = x.url_id || x.hash || id
     const picId = server === 'kugou'
       ? (x.pic_id || x.hash || x.url_id || id)
       : (x.pic_id || x.album_audio_id || x.albumid || x.hash || id)
-    const lrcId = server === 'kugou'
-      ? (x.lyric_id || x.hash || id)
-      : (x.lyric_id || x.hash || id)
+    const lrcId = x.lyric_id || x.hash || id
 
     return {
       title,

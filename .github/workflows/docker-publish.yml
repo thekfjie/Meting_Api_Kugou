@@ -3,20 +3,31 @@ name: Docker Build and Push
 on:
   push:
     branches:
-      - master
+      - main
     tags:
       - 'v*'
   pull_request:
     branches:
-      - master
+      - main
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   build-and-push:
+    needs: checks
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: api
+            suffix: ''
+          - target: upstream
+            suffix: '-upstream'
     permissions:
       contents: read
       packages: write
@@ -25,8 +36,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Normalize image name
+        id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}${{ matrix.suffix }}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -40,8 +59,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
@@ -53,9 +73,10 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          target: ${{ matrix.target }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
           platforms: linux/amd64,linux/arm64

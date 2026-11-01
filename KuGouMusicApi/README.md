@@ -1,195 +1,39 @@
-# KuGouMusicApi Upstream
-## Current Deployment Note
+# KuGouMusicApi 上游
 
-This upstream is now expected to run as two PM2 processes in the integration repo:
+本目录是整合仓库内维护的酷狗 HTTP 上游，保留 Express / CommonJS 实现。部署入口见 [根目录 README](../README.md)，底层接口见 [接口文档](docs/README.md)。
 
-- `kugou-upstream` on the regular/default platform, typically `127.0.0.1:3100`
-- `kugou-upstream-lite` on the lite/concept platform, typically `127.0.0.1:3101`
+## 普通版与概念版
 
-The root service should point to them with:
+两种平台使用独立进程和登录态：
 
-```bash
-METING_KUGOU_UPSTREAM_DEFAULT_URL=http://127.0.0.1:3100
-METING_KUGOU_UPSTREAM_LITE_URL=http://127.0.0.1:3101
-```
+| 进程 | 平台 | PM2 本地端口 | Compose 内部端口 |
+| --- | --- | --- | --- |
+| `kugou-upstream` | `default` | `3100` | `3100` |
+| `kugou-upstream-lite` | `lite` | `3101` | `3100` |
 
-If only `METING_KUGOU_UPSTREAM_URL` is configured, both pools will share one upstream, which is no longer the preferred regular + lite deployment mode.
+PM2 / Compose 已固定各自平台，不需要切换同一个 `.env` 来运行两个版本。根服务根据账号池的平台选择上游。
 
-这个目录不是原始独立仓库说明页，而是当前整合仓库里的 upstream 子项目说明。
+## 单独启动
 
-它的职责很明确：
-
-- 作为根层 `Meting-API` 的 Kugou HTTP upstream
-- 提供登录、刷新、资料查询、概念版领取、资源解析等底层接口
-- 被根层通过 `METING_KUGOU_UPSTREAM_URL` 调用
-
-## 默认启动信息
-
-- 默认端口：`3100`
-- 默认入口：`http://127.0.0.1:3100`
-- 技术栈：`Express + CommonJS`
-
-根层推荐指向：
+在仓库根目录执行 `npm run setup` 后，可用以下两个命令分别启动：
 
 ```bash
-METING_KUGOU_UPSTREAM_URL=http://127.0.0.1:3100
+npm run start:upstream
+npm run start:upstream:lite
 ```
 
-## 关键配置
+也可进入本目录后运行 `npm start -- --platform=lite --port=3101`。直接启动时从本目录 `.env` 读取配置，命令行覆盖 `platform`、`PORT` 等值。
 
-请在当前目录创建 `KuGouMusicApi/.env`。
+设备身份可由 `KUGOU_API_GUID`、`KUGOU_API_DEV`、`KUGOU_API_MAC` 固定；代理使用 `KUGOU_API_PROXY`。`.env.default.example`、`.env.lite.example` 提供单独启动的配置示例。
 
-最关键的项：
+## 构建与检查
+
+统一镜像从仓库根目录构建：
 
 ```bash
-platform=lite
-PORT=3100
-HOST=127.0.0.1
+docker build --target upstream -t meting-kugou-upstream .
 ```
 
-说明：
+`GET /healthz` 返回进程存活状态，不注册设备、不查询账号、不调用酷狗远端。测试文件不会被动态加载为 HTTP 路由。
 
-- `platform=lite` 表示切到概念版参数
-- `platform` 不在根目录 `.env` 里配置，而在 `KuGouMusicApi/.env`
-- 不同平台的 token 不通用，切到 `lite` 后最好重新登录或 refresh
-
-### 建议固定的设备参数
-
-如果你希望登录态更稳定，建议固定以下环境变量：
-
-- `KUGOU_API_GUID`
-- `KUGOU_API_DEV`
-- `KUGOU_API_MAC`
-
-服务也会自动补：
-
-- `KUGOU_API_PLATFORM`
-- `KUGOU_API_MID`
-- `KUGOU_API_GUID`
-- `KUGOU_API_DEV`
-- `KUGOU_API_MAC`
-
-## 启动
-
-```bash
-npm install
-npm run dev
-```
-
-PowerShell 临时指定端口：
-
-```powershell
-$Env:PORT=3100
-npm run dev
-```
-
-Linux 临时指定端口：
-
-```bash
-PORT=3100 npm run dev
-```
-
-## 当前集成里最重要的接口
-
-### 登录相关
-
-- `/login/qr/key`
-- `/login/qr/create`
-- `/login/qr/check`
-- `/login/cellphone`
-- `/captcha/sent`
-- `/login/token`
-- `/register/dev`
-
-根层管理页已经接了这些能力，用于：
-
-- 二维码登录
-- 短信验证码登录
-- refresh 登录态
-- 拉取用户资料和 VIP 资料
-
-### 账号资料
-
-- `/user/detail`
-- `/user/vip/detail`
-
-### 概念版领取
-
-- `/youth/listen/song`
-- `/youth/vip`
-
-根层管理页的一键领取逻辑就是围绕这两个接口展开的。
-
-### 资源解析
-
-根层会优先拿这些接口补强 Kugou 资源：
-
-- `/privilege/lite`
-- `/krm/audio`
-- `/song/url`
-- `/playlist/detail`
-- `/playlist/track/all`
-
-## 与根层的配合方式
-
-根层会把这个子项目当成 HTTP upstream。
-
-典型链路：
-
-1. 根层选择 `premium / general / internal` Cookie 池
-2. 若配置了 `METING_KUGOU_UPSTREAM_URL`
-3. 根层优先调用本目录服务的接口
-4. 拿到数据后再转成 Meting 风格输出
-5. 如果 upstream 失败，根层才会回退
-
-## 你现在最该关注的不是“能不能启动”，而是“是不是在用 lite”
-
-建议联合根层一起看：
-
-- `KuGouMusicApi/.env` 里的 `platform`
-- 根层管理页显示的当前 Cookie 来源是 `env` 还是 `file`
-- 根层响应头 `x-kugou-upstream`
-
-如果是下面这种组合：
-
-- `platform=lite`
-- 但根层实际来源还是 `METING_COOKIE_KUGOU*`
-
-那就说明运行时仍可能没有真正吃到后台写入的文件池登录态。
-
-## 相关文件
-
-- `server.js`
-- `util/index.js`
-- `module/login_token.js`
-- `module/user_detail.js`
-- `module/user_vip_detail.js`
-- `module/youth_listen_song.js`
-- `module/youth_vip.js`
-
-## Platform Switch Quick Reference
-
-Regular mode keeps the upstream aligned with the normal Kugou client flow:
-
-```bash
-platform=
-PORT=3100
-HOST=127.0.0.1
-```
-
-Lite mode can be prepared in the repo without enabling it right now:
-
-```bash
-platform=lite
-PORT=3100
-HOST=127.0.0.1
-```
-
-Important:
-
-- `platform=` means regular/default mode.
-- `platform=lite` means concept/lite mode.
-- Do not use `platform=''`.
-- After switching modes, restart the upstream with `pm2 restart kugou-upstream --update-env`.
-- Re-login or refresh the related Kugou pool after a mode switch.
-- Example files are included as `.env.default.example` and `.env.lite.example`.
+原始接口模块及 MIT 许可继续保留。普通版与概念版 token 不应混用，登录、刷新、领取由根服务管理。

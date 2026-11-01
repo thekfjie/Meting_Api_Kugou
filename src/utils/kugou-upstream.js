@@ -1,10 +1,14 @@
-import config from '../config.js'
+import { logger } from '../middleware/logger.js'
 import { buildKugouUpstreamAuthCookie } from './kugou-upstream-auth.js'
 import { getKugouPoolUpstreamUrl, hasKugouPoolUpstream } from './kugou-upstream-runtime.js'
+import { requestKugouUpstream } from './kugou-upstream-client.js'
+import { parseKugouCookie } from './kugou-songinfo.js'
 
 const DFID_TTL_MS = 1000 * 60 * 60 * 6
 
 const cachedDfids = new Map()
+const pendingDfids = new Map()
+const UPSTREAM_TYPES = new Set(['song', 'playlist', 'lrc', 'url', 'pic'])
 
 const getBaseUrl = (pool = 'premium') => String(getKugouPoolUpstreamUrl(pool) || '').trim().replace(/\/+$/, '')
 
@@ -18,22 +22,6 @@ const normalizeUrl = (value, size = 400) => {
     out = `https://${out.slice('http://'.length)}`
   }
   return out
-}
-
-const stripEnvelope = (text) => {
-  const raw = normalizeText(text)
-  if (!raw) return ''
-
-  const startTag = '<!--KG_TAG_RES_START-->'
-  const endTag = '<!--KG_TAG_RES_END-->'
-  const start = raw.indexOf(startTag)
-  const end = raw.lastIndexOf(endTag)
-
-  if (start !== -1 && end !== -1 && end > start) {
-    return raw.slice(start + startTag.length, end).trim()
-  }
-
-  return raw
 }
 
 const buildCompositeId = (hash, albumAudioId = '') => {
@@ -67,35 +55,17 @@ const pickAuthor = (names = [], fallback = '') => {
   return author || normalizeText(fallback) || '未知歌手'
 }
 
-const requestUpstream = async (path, { query = {}, cookie = '', headers: extraHeaders = {}, pool = 'premium' } = {}) => {
-  const baseUrl = getBaseUrl(pool)
-  if (!baseUrl) return null
-
-  const url = new URL(`${baseUrl}${path}`)
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined || value === null || value === '') continue
-    url.searchParams.set(key, String(value))
-  }
-
-  const headers = {
-    Accept: 'application/json, text/plain, */*'
-  }
-  if (cookie) headers.Cookie = cookie
-  Object.assign(headers, extraHeaders || {})
-
+const requestUpstream = async (path, options = {}) => {
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(config.meting.kugou.upstream.timeoutMs)
-    })
-
-    if (!response.ok) return null
-
-    const text = stripEnvelope(await response.text())
-    if (!text) return null
-    return JSON.parse(text)
+    const response = await requestKugouUpstream(path, options)
+    if (!response) return null
+    if (!response.ok) {
+      logger.warn({ path, pool: options.pool, status: response.status }, 'Kugou upstream HTTP error')
+      return null
+    }
+    return response.body
   } catch (error) {
+    logger.warn({ path, pool: options.pool, code: error.code, status: error.status }, 'Kugou upstream request failed')
     return null
   }
 }
@@ -105,6 +75,10 @@ const buildAuthCookie = ({ cookie = '', dfid = '' } = {}) => {
 }
 
 const ensureUpstreamDfid = async (pool, cookie = '') => {
+  const parsed = parseKugouCookie(cookie)
+  const existingDfid = normalizeText(parsed.dfid || parsed.kg_dfid)
+  if (existingDfid) return existingDfid
+
   const baseUrl = getBaseUrl(pool)
   const cacheKey = `${pool}:${baseUrl}`
   const now = Date.now()
@@ -113,12 +87,19 @@ const ensureUpstreamDfid = async (pool, cookie = '') => {
     return cached.dfid
   }
 
-  const response = await requestUpstream('/register/dev', { pool })
-  const dfid = normalizeText(response?.data?.dfid)
-  if (!dfid) return ''
-
-  cachedDfids.set(cacheKey, { dfid, at: now })
-  return dfid
+  if (pendingDfids.has(cacheKey)) return pendingDfids.get(cacheKey)
+  const pending = (async () => {
+    const response = await requestUpstream('/register/dev', { pool })
+    const dfid = normalizeText(response?.data?.dfid)
+    if (dfid) cachedDfids.set(cacheKey, { dfid, at: Date.now() })
+    return dfid
+  })()
+  pendingDfids.set(cacheKey, pending)
+  try {
+    return await pending
+  } finally {
+    pendingDfids.delete(cacheKey)
+  }
 }
 
 const mapSongFromPrivilege = (item, meta = null) => {
@@ -231,9 +212,11 @@ const getUpstreamUrl = async ({ id, cookie, pool }) => {
   const backupUrl = Array.isArray(response?.backupUrl)
     ? response.backupUrl[0]
     : normalizeText(response?.backupUrl)
-  const resolved = normalizeUrl(url || backupUrl, 0)
+  // Playback URLs are signed upstream resources. Preserve their scheme: some
+  // lite CDNs only serve a valid response over HTTP.
+  const resolved = normalizeText(url || backupUrl)
 
-  return resolved ? { url: resolved } : null
+  return /^https?:\/\//i.test(resolved) ? { url: resolved } : null
 }
 
 const getUpstreamLyric = async ({ id, pool }) => {
@@ -285,14 +268,24 @@ const getUpstreamPlaylist = async ({ id, pool }) => {
       },
       pool
     })
-    const chunk = Array.isArray(response?.data?.songs) ? response.data.songs : []
-    if (chunk.length === 0) break
+    const chunk = response?.data?.songs
+    // A failed page must not become a successful, truncated playlist.
+    if (!Array.isArray(chunk)) return null
+    if (chunk.length === 0) {
+      if (total > songs.length) return null
+      break
+    }
 
     songs.push(...chunk)
 
-    if (chunk.length < pageSize || (total > 0 && songs.length >= total)) {
+    if (total > 0 && songs.length >= total) {
       break
     }
+    if (chunk.length < pageSize) {
+      if (total > songs.length) return null
+      break
+    }
+    if (page === 20) return null
   }
 
   return songs
@@ -301,6 +294,7 @@ const getUpstreamPlaylist = async ({ id, pool }) => {
 }
 
 export const hasKugouUpstream = (pool = 'premium') => hasKugouPoolUpstream(pool)
+export const canUseKugouUpstream = (type, pool = 'premium') => UPSTREAM_TYPES.has(type) && hasKugouUpstream(pool)
 
 export const extractKugouHashFromResourceId = (value) => {
   const raw = normalizeText(value)
@@ -319,7 +313,7 @@ export const buildKugouCompositeId = (hash, albumAudioId = '') => {
 }
 
 export const getKugouUpstreamData = async ({ type, id, cookie = '', pool = 'premium' }) => {
-  if (!hasKugouUpstream(pool)) return null
+  if (!canUseKugouUpstream(type, pool)) return null
 
   if (type === 'song') return getUpstreamSong({ id, cookie, pool })
   if (type === 'playlist') return getUpstreamPlaylist({ id, pool })

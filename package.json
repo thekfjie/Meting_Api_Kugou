@@ -6,10 +6,17 @@
   "author": "metowolf",
   "license": "MIT",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "setup": "node scripts/setup.js",
     "start": "node src/index.js",
+    "start:upstream": "npm --prefix KuGouMusicApi start -- --platform=default --port=3100",
+    "start:upstream:lite": "npm --prefix KuGouMusicApi start -- --platform=lite --port=3101",
     "dev": "nodemon src/index.js",
-    "lint": "eslint ."
+    "lint": "node --max-old-space-size=128 node_modules/eslint/bin/eslint.js src scripts test ecosystem.config.cjs eslint.config.js",
+    "test": "node --max-old-space-size=128 --test --test-concurrency=1 test/*.test.js KuGouMusicApi/module/*.test.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",

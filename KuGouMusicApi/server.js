@@ -45,7 +45,7 @@ async function getModulesDefinitions(modulesPath, specificRoute, doRequire = tru
 
   return files
     .reverse()
-    .filter((fileName) => fileName.endsWith('.js') && !fileName.startsWith('_'))
+    .filter((fileName) => fileName.endsWith('.js') && !fileName.startsWith('_') && !/\.(test|spec)\.js$/i.test(fileName))
     .map((fileName) => {
       const identifier = fileName.split('.').shift();
       const route = parseRoute(fileName);
@@ -62,6 +62,7 @@ async function getModulesDefinitions(modulesPath, specificRoute, doRequire = tru
  */
 async function consturctServer(moduleDefs) {
   const app = express();
+  app.get('/healthz', (_, res) => res.json({ status: 'ok' }));
   const { CORS_ALLOW_ORIGIN } = process.env;
   app.set('trust proxy', true);
 
