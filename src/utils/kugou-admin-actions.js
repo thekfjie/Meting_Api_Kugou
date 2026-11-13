@@ -394,7 +394,10 @@ export const checkKugouPoolSession = pool => withPoolOperation(pool, async () =>
       }
       result.profile = await check('/user/detail')
       result.device = await check('/login/device')
-      result.status = [result.profile, result.device].every(r => r.http === 200 && Number(r.status) === 1 && Number(r.errorCode) === 0) ? 'valid' : 'invalid'
+      const checks = [result.profile, result.device]
+      const valid = checks.every(r => r.http === 200 && Number(r.status) === 1 && Number(r.errorCode) === 0)
+      const rejected = checks.some(r => [401, 403].includes(r.http) || (r.http === 200 && (Number(r.status) !== 1 || Number(r.errorCode) !== 0)))
+      result.status = valid ? 'valid' : rejected ? 'invalid' : 'unknown'
     } catch (error) { result.error = error.code || 'NETWORK_ERROR' }
   }
   await setKugouAdminPoolState(pool, { sessionStatus: result })

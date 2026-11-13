@@ -12,10 +12,12 @@ import { createMockUpstream, json } from './helpers.js'
 
 let mock
 let rejectedUser = ''
+let unavailableUser = ''
 before(async () => {
   mock = await createMockUpstream((req, res) => {
     const cookie = parseSimpleCookie(req.headers.cookie)
     if (cookie.userid === rejectedUser) return json(res, { status: 0, error_code: 20004 }, 502)
+    if (cookie.userid === unavailableUser) return json(res, { status: 0, error_code: 20006 }, 502)
     json(res, { status: 1, error_code: 0, data: { userid: cookie.userid, nickname: `Fixture ${cookie.userid}`, vip_type: 1 } })
   })
   config.meting.kugou.upstream.defaultUrl = `${mock.url}/default`
@@ -63,6 +65,16 @@ test('an expired standby login cannot replace the currently working account', as
     assert.equal((await activateKugouAccount('general', 'lite:10002')).ok, false)
     assert.equal(await readCookieFile('kugou', 'general'), beforeCookie)
   } finally { rejectedUser = '' }
+})
+
+test('temporary upstream failures do not label the current account as expired', async () => {
+  unavailableUser = '10003'
+  try {
+    const result = await checkKugouPoolSession('premium')
+    assert.equal(result.ok, false)
+    assert.equal(result.sessionStatus.status, 'unknown')
+    assert.equal(parseSimpleCookie(await readCookieFile('kugou', 'premium')).t, 'default-private-token')
+  } finally { unavailableUser = '' }
 })
 
 test('management assets support both aliases and new actions require authentication', async () => {
