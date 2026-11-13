@@ -1,4 +1,5 @@
 import { getKugouAccountStatus } from '../utils/kugou-account-status.js'
+import { getKugouDispatchSnapshot } from '../utils/kugou-dispatch.js'
 
 const describePool = (pool, account, traffic) => {
   const currentMinute = traffic?.perMinute?.[pool] || 0
@@ -201,19 +202,29 @@ const mapPoolName = (pool) => {
 export default async (c) => {
   const force = c.req.query('refresh') === '1'
   const data = await getKugouAccountStatus(force)
+  const dispatch = await getKugouDispatchSnapshot()
+  // Probe state is cached. Apply current dispatch quotas without changing it.
+  const traffic = { ...data.traffic, remainingPerMinute: { ...data.traffic?.remainingPerMinute } }
+  for (const pool of ['premium', 'general']) {
+    const accounts = dispatch.accounts.filter(a => a.pool === pool && a.enabled)
+    if (dispatch.accounts.some(a => a.pool === pool)) {
+      traffic.remainingPerMinute[pool] = accounts.some(a => a.limit === 0) ? Number.MAX_SAFE_INTEGER : accounts.reduce((sum, a) => sum + a.remaining, 0)
+    }
+  }
+  traffic.remainingPerMinute.total = (traffic.remainingPerMinute.premium || 0) + (traffic.remainingPerMinute.general || 0)
   const premiumAccount = data.accounts?.premium || {}
   const generalAccount = data.accounts?.general || {}
   const internalAccount = data.accounts?.internal || {}
   const pro = {
-    ...describePool('premium', premiumAccount, data.traffic || {}),
+    ...describePool('premium', premiumAccount, traffic),
     diagnostics: buildDiagnostics('premium', premiumAccount)
   }
   const normal = {
-    ...describePool('general', generalAccount, data.traffic || {}),
+    ...describePool('general', generalAccount, traffic),
     diagnostics: buildDiagnostics('general', generalAccount)
   }
   const internal = {
-    ...describePool('internal', internalAccount, data.traffic || {}),
+    ...describePool('internal', internalAccount, traffic),
     diagnostics: buildDiagnostics('internal', internalAccount)
   }
   c.header('cache-control', 'no-store')
@@ -225,7 +236,7 @@ export default async (c) => {
     cacheRemainingSeconds: data.cacheRemainingSeconds,
     summary: {
       currentMinute: data.traffic?.perMinute?.total || 0,
-      remainingMinute: data.traffic?.remainingPerMinute?.total || 0,
+      remainingMinute: traffic.remainingPerMinute.total,
       startedAt: data.traffic?.startedAt || null,
       requests: {
         premium: data.traffic?.requests?.premium || 0,

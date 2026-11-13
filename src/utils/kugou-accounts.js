@@ -41,6 +41,7 @@ export const listKugouAccounts = async () => {
     vipType: account.profile?.vipType || '',
     expireTime: account.profile?.expireTime || '',
     updatedAt: account.updatedAt,
+    maintenance: account.maintenance || {},
     auth: kugouAuthSummary(account.cookie),
     sessionStatus: account.sessionStatus?.token === kugouAuthSummary(account.cookie).token ? account.sessionStatus : null
   }))

@@ -50,7 +50,7 @@ PM2 的 `KUGOU_UPSTREAM_DEFAULT_PORT` / `KUGOU_UPSTREAM_LITE_PORT` 可以修改�
 | `general` | 概念版 | `METING_COOKIE_KUGOU_GENERAL` → `cookie/kugou-general` |
 | `internal` | 游客 | 不使用账号 Cookie |
 
-有效的 premium key 选择 premium 池。白名单 Referer 命中的博客歌单曲目也可选择 premium；其余请求走 general。general 额度耗尽时回退到游客线路，premium 额度耗尽返回 `429`。
+有效的 premium key 选择 premium 池。白名单 Referer 命中的博客歌单曲目也可选择 premium；其余请求走 general。账号仅参与所属平台的池，Default 和 Lite 不交叉借用登录态。池内所有账号额度耗尽时，general 回退到游客线路，premium 返回 `429`。
 
 `BLOG_DATA_DIR` 默认 `./blog-data`，读取可选的 `kugou_playlist.yml`、`liked_playlist.yml` 曲目白名单。Docker 部署可为 API 额外挂载该目录到 `/app/blog-data:ro`。
 
@@ -58,7 +58,11 @@ PM2 的 `KUGOU_UPSTREAM_DEFAULT_PORT` / `KUGOU_UPSTREAM_LITE_PORT` 可以修改�
 
 同一账号可以分别在两个池发起登录，二维码、短信会话及 Cookie 按池独立保存。普通版和概念版各完成一次登录，不要在两个版本之间复制或迁移 Cookie。刷新、资料查询和播放请求携带各自登录时的设备标识，重启上游后仍沿用已保存的身份。旧版管理状态会自动迁移。
 
-登录态按 `版本 + 用户 ID` 保留在私有 `data/kugou-admin-state.json` 中。新账号写入池时会保留原账号，管理页的“备用账号”可切换回来；切换前会验证目标登录态，备用账号启用后才参与自动维护。
+登录态按 `版本 + 用户 ID` 保留在私有 `data/kugou-admin-state.json` 中。所有登录态直接显示在账号表格，默认参与所属平台的调度和自动维护。新增登录不会移除其他账号；暂停后保留登录态并停止调度与自动任务。
+
+调度策略可选“均衡负载”或“优先账号，用满后切换”。均衡模式优先选择本分钟用量较少的账号；优先模式在该平台内先使用指定账号，达到限额、被暂停或校验失效后选择同平台的其他账号。解析失败时最多重试一个同平台账号。每个登录态的每分钟上限可在表格内修改，初始值继承该平台所属池的 `MAX_RPM`，`0` 表示不限。计数采用现有自然分钟窗口，缓存命中不扣额度；并发请求在发出前同步预留名额。计数保存在当前 API 进程内，重启后重新计数。
+
+多账号情况下，池文件代表原有管理按钮的默认账号；解析请求按所选策略逐次选用账号，不会反复改写 Cookie 文件。每个登录态分别刷新和领取 Lite 会员，任务串行执行。对外链接、签名、Referer 路由与 `/music/stream` 保持兼容；原有白名单博客歌单的 premium 额度豁免也保持不变。
 
 API 日志中的 `event=kugou-auth` 记录登录、刷新和 Cookie 写入过程，含版本、上游状态码，以及账号、Token 和设备字段的 SHA-256 摘要；不记录原始 Token、验证码或二维码 key。排查互相掉线时，对照两个池登录前后的摘要及 `/user/detail` 返回状态，确认是本地 Cookie 被改写还是上游拒绝旧登录态。
 
@@ -94,8 +98,8 @@ POST /music/manage/kugou/vip/claim-all
 | `METING_CACHE_DEFAULT_MS` | `3600000` | 普通响应缓存，1 小时 |
 | `METING_KUGOU_URL_CACHE_MS` | `600000` | 播放地址缓存，10 分钟 |
 | `METING_KUGOU_SHARE_PLAYLIST_CACHE_MS` | `1800000` | 分享歌单缓存，30 分钟 |
-| `METING_KUGOU_PREMIUM_MAX_RPM` | `60` | premium 每分钟额度 |
-| `METING_KUGOU_GENERAL_MAX_RPM` | `180` | general 每分钟额度 |
+| `METING_KUGOU_PREMIUM_MAX_RPM` | `60` | Default 账号每分钟初始上限 |
+| `METING_KUGOU_GENERAL_MAX_RPM` | `180` | Lite 账号每分钟初始上限 |
 
 缓存与分钟额度是进程内状态，重启后重置；账号和调度状态保存在文件中。
 

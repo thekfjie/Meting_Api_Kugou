@@ -4,11 +4,13 @@ import { readCookieFile } from './cookie.js'
 import { isDueAt, buildNextClaimAt, buildNextRefreshAt } from './kugou-auto-schedule.js'
 import {
   claimKugouLiteVip,
-  refreshKugouPool
+  refreshKugouPool,
+  runKugouAccountAction
 } from './kugou-admin-actions.js'
-import { getKugouAdminPoolState, setKugouAdminPoolState } from './kugou-admin-state.js'
+import { getKugouAdminPoolState, setKugouAdminPoolState, readKugouAdminState, updateKugouAdminState } from './kugou-admin-state.js'
+import { getKugouAccountId } from './kugou-accounts.js'
 import { hasKugouUpstreamAuth } from './kugou-upstream-auth.js'
-import { shouldAutoClaimKugouPool } from './kugou-upstream-runtime.js'
+import { getKugouPoolPlatform, shouldAutoClaimKugouPool } from './kugou-upstream-runtime.js'
 
 const KUGOU_POOLS = ['premium', 'general']
 
@@ -55,6 +57,7 @@ const ensureScheduleState = async (pool, state, hasCookie) => {
 const runPoolJobs = async (pool) => {
   const normalizedPool = normalizePool(pool)
   const cookie = await readCookieFile('kugou', normalizedPool)
+  if ((await readKugouAdminState()).dispatch.disabled.includes(getKugouAccountId(cookie, getKugouPoolPlatform(pool)))) return
   const initialState = await getKugouAdminPoolState(normalizedPool)
   const state = await ensureScheduleState(normalizedPool, initialState, Boolean(cookie))
 
@@ -85,7 +88,7 @@ const runPoolJobs = async (pool) => {
   }
 }
 
-const tick = async () => {
+export const runKugouAutoRefreshTick = async () => {
   if (running) return
   if (!hasKugouUpstreamAuth()) return
 
@@ -93,6 +96,23 @@ const tick = async () => {
   try {
     for (const pool of KUGOU_POOLS) {
       await runPoolJobs(pool)
+    }
+    const currentIds = await Promise.all(KUGOU_POOLS.map(async pool => getKugouAccountId(await readCookieFile('kugou', pool), getKugouPoolPlatform(pool))))
+    const state = await readKugouAdminState()
+    for (const account of Object.values(state.accounts)) {
+      if (currentIds.includes(account.id) || state.dispatch.disabled.includes(account.id)) continue
+      const pool = KUGOU_POOLS.find(pool => account.platform === getKugouPoolPlatform(pool))
+      if (!pool) continue
+      const schedule = account.maintenance || {}
+      const patch = {}
+      if (!schedule.nextRefreshAt) patch.nextRefreshAt = buildNextRefreshAt()
+      if (shouldAutoClaimKugouPool(pool) && !schedule.nextClaimAt) patch.nextClaimAt = buildNextClaimAt()
+      if (Object.keys(patch).length) await updateKugouAdminState(draft => { draft.accounts[account.id].maintenance = { ...schedule, ...patch } })
+      if (isDueAt(schedule.nextRefreshAt)) {
+        const result = await runKugouAccountAction(account.id, 'refresh')
+        if (!result.ok) continue
+      }
+      if (shouldAutoClaimKugouPool(pool) && isDueAt(schedule.nextClaimAt)) await runKugouAccountAction(account.id, 'claim')
     }
   } catch (error) {
     logger.error({ error: error.message }, 'Kugou scheduler tick failed')
@@ -106,14 +126,14 @@ export const startKugouAutoRefreshScheduler = () => {
 
   const intervalMs = Math.max(30 * 1000, config.meting.kugou.scheduler.checkIntervalMs || 60 * 1000)
   timer = setInterval(() => {
-    tick().catch(() => {})
+    runKugouAutoRefreshTick().catch(() => {})
   }, intervalMs)
 
   if (typeof timer.unref === 'function') {
     timer.unref()
   }
 
-  tick().catch(() => {})
+  runKugouAutoRefreshTick().catch(() => {})
   logger.info({ intervalMs }, 'Kugou scheduler started')
 }
 

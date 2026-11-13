@@ -31,6 +31,8 @@ import {
 import { isHashInBlogPlaylist } from '../utils/blog-playlist-whitelist.js'
 import { LRUCache } from 'lru-cache'
 import { streamKugouAudio } from '../utils/kugou-audio-stream.js'
+import { selectKugouAccount } from '../utils/kugou-dispatch.js'
+import { kugouAuthSummary } from '../utils/kugou-auth-log.js'
 
 const cache = new LRUCache({
   max: 1000,
@@ -119,7 +121,7 @@ const recordApiSummary = ({ c, server, type, id, pool, cacheHit, upstreamStatus,
 }
 
 export default async (c) => {
-  c.header('access-control-expose-headers', 'x-cache, x-kugou-route, x-kugou-notice, x-kugou-upstream')
+  c.header('access-control-expose-headers', 'x-cache, x-kugou-route, x-kugou-notice, x-kugou-upstream, x-kugou-account')
 
   const query = c.req.query()
   const server = query.server || 'netease'
@@ -178,6 +180,7 @@ export default async (c) => {
   let cacheHit = cacheEntry !== undefined
   let upstreamStatus = cacheEntry?.__metingCache ? (cacheEntry.upstreamStatus || 'miss') : 'miss'
   let upstreamAttempted = false
+  let selectedAccount = null
 
   if (server === 'kugou') {
     const quotaExempt = shouldExemptKugouQuota({
@@ -186,7 +189,26 @@ export default async (c) => {
       reason: kugouRoute.reason,
       requestSource
     })
-    if (effectiveKugouPool === 'premium' || effectiveKugouPool === 'general') {
+    const selection = !cacheHit && !isKugouSharePlaylist ? await selectKugouAccount(effectiveKugouPool, { consume: !quotaExempt }) : null
+    if (selection?.configured) {
+      if (selection.exhausted) {
+        recordKugouBlocked({ pool: effectiveKugouPool, reason: kugouRoute.reason })
+        if (effectiveKugouPool === 'premium') {
+          c.header('x-cache', 'miss')
+          throw new HTTPException(429, { message: '所有账号本分钟额度已用尽，请等待下一分钟刷新' })
+        }
+        effectiveKugouPool = 'internal'
+        fallbackNotice = '账号额度已用尽，已切换至游客线路，VIP 歌曲可能仅支持试听'
+        cacheKey = buildCacheKey(effectiveKugouPool)
+        cacheEntry = cache.get(cacheKey)
+        data = cacheEntry?.__metingCache ? cacheEntry.payload : cacheEntry
+        cacheHit = cacheEntry !== undefined
+        upstreamStatus = cacheEntry?.__metingCache ? (cacheEntry.upstreamStatus || 'miss') : 'miss'
+      } else {
+        selectedAccount = selection
+        recordKugouRequest({ pool: effectiveKugouPool, reason: kugouRoute.reason, cacheHit: false, countTowardQuota: !quotaExempt, exemptTag: quotaExempt ? requestSource : '', enforceQuota: false })
+      }
+    } else if (effectiveKugouPool === 'premium' || effectiveKugouPool === 'general') {
       if (cacheHit) {
         recordKugouRequest({
           pool: effectiveKugouPool,
@@ -248,19 +270,28 @@ export default async (c) => {
     meting.format(true)
 
     const cookiePool = getCookiePool({ server, allowCookie, kugouPool: effectiveKugouPool })
-    const cookie = cookiePool
+    let cookie = selectedAccount?.cookie || (cookiePool
       ? await readCookieFile(server, cookiePool)
-      : ''
+      : '')
     if (cookie) meting.cookie(cookie)
 
     if (server === 'kugou' && effectiveKugouPool !== 'internal' && !isKugouSharePlaylist && canUseKugouUpstream(type, effectiveKugouPool)) {
       upstreamAttempted = true
-      const upstreamData = await getKugouUpstreamData({
+      let upstreamData = await getKugouUpstreamData({
         type,
         id,
         cookie,
-        pool: effectiveKugouPool
+        pool: selectedAccount?.pool || effectiveKugouPool
       })
+      if (upstreamData == null && selectedAccount) {
+        const retry = await selectKugouAccount(effectiveKugouPool, { exclude: [selectedAccount.id], consume: !shouldExemptKugouQuota({ server, kugouPool, reason: kugouRoute.reason, requestSource }) })
+        if (retry.cookie) {
+          selectedAccount = retry
+          cookie = retry.cookie
+          meting.cookie(cookie)
+          upstreamData = await getKugouUpstreamData({ type, id, cookie, pool: retry.pool })
+        }
+      }
       if (upstreamData != null) {
         data = upstreamData
         upstreamStatus = 'hit'
@@ -323,7 +354,8 @@ export default async (c) => {
     cache.set(cacheKey, {
       __metingCache: true,
       payload: data,
-      upstreamStatus
+      upstreamStatus,
+      account: selectedAccount ? kugouAuthSummary(selectedAccount.cookie).user : ''
     }, {
       ttl: getResponseCacheTtl({
         server,
@@ -340,6 +372,8 @@ export default async (c) => {
   }
 
   if (server === 'kugou') {
+    const account = selectedAccount ? kugouAuthSummary(selectedAccount.cookie).user : cacheEntry?.account
+    if (account) c.header('x-kugou-account', account)
     c.header('x-kugou-upstream', upstreamStatus)
     recordKugouUpstreamTrace({
       status: upstreamStatus,

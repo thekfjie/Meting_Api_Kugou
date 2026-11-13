@@ -20,9 +20,11 @@ import {
   claimAllKugouLiteVip,
   claimKugouLiteVip,
   getKugouPoolLabel,
-  refreshKugouPool
+  refreshKugouPool,
+  runKugouAccountAction
 } from '../utils/kugou-admin-actions.js'
-import { getKugouAccountId, listKugouAccounts } from '../utils/kugou-accounts.js'
+import { getKugouAccountId, getSavedKugouAccount, saveKugouAccount, listKugouAccounts } from '../utils/kugou-accounts.js'
+import { getKugouDispatchSnapshot, saveKugouDispatchPolicy, setKugouAccountLimit, setKugouAccountEnabled } from '../utils/kugou-dispatch.js'
 import {
   getKugouAdminPoolState,
   getKugouAdminSession,
@@ -384,6 +386,16 @@ th,td { padding:10px 8px; }
 .section-details > .mini { margin-top:12px; }
 .subcard { min-width:0; overflow-wrap:anywhere; }
 .card .subcard div { font-size:14px; }
+.dispatch-controls { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+.dispatch-controls label { margin:0; min-width:160px; }
+.dispatch-controls select { margin-top:6px; }
+.quota-form { display:flex; align-items:center; gap:6px; }
+.quota-form input { width:78px; padding:6px 8px; }
+.quota-form button,.account-actions button { padding:6px 9px; }
+.account-actions { display:flex; gap:6px; }
+.route-state { color:var(--text-sub); }
+.route-state.primary { color:var(--flash-text); background:var(--flash-bg); padding:3px 7px; border-radius:4px; }
+.account-table { min-width:1300px!important; }
 @media (min-width:769px) { .compact-card { grid-column:auto; } }
 @media (max-width: 768px) {
   .wrap { padding:20px 16px; }
@@ -465,6 +477,7 @@ export const page = ({
   procs,
   pools,
   accounts = [],
+  dispatch = { mode: 'balanced', accounts: [] },
   mon,
   qrSessions,
   smsSessions,
@@ -475,6 +488,17 @@ export const page = ({
   quickProcessNames
 }) => {
   const litePools = pools.filter(item => item.platform === 'lite')
+  const accountRows = accounts.map(account => {
+    const routing = dispatch.accounts.find(a => a.id === account.id) || { enabled: true, used: 0, limit: 0 }
+    const current = pools.find(p => p.accountId === account.id)
+    const pool = pools.find(p => p.platform === account.platform)
+    const state = current?.state || account.maintenance || {}
+    const preferred = dispatch.mode === 'priority' && dispatch.preferredUserId === account.userId
+    const multiple = accounts.filter(a => a.platform === account.platform).length > 1
+    const role = !routing.enabled ? '已暂停' : multiple && dispatch.mode === 'priority' ? preferred ? '优先' : '接替' : multiple ? '均衡' : '默认'
+    const login = account.sessionStatus?.status
+    return { ...account, routing, state, pool, role, preferred, loginLabel: login === 'valid' ? '有效' : login === 'invalid' ? '失效' : login === 'unknown' ? '待确认' : '未检测' }
+  }).sort((a, b) => (a.pool?.pool || '').localeCompare(b.pool?.pool || '') || Number(b.preferred) - Number(a.preferred) || a.userId.localeCompare(b.userId))
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -556,8 +580,13 @@ export const page = ({
       </section>
       <section class="card full">
         <h2>账号信息</h2>
+        <form class="dispatch-controls" method="post" action="${root(basePath)}/dispatch/policy">
+          <label>调度策略<select name="mode"><option value="balanced"${dispatch.mode === 'balanced' ? ' selected' : ''}>均衡负载</option><option value="priority"${dispatch.mode === 'priority' ? ' selected' : ''}>优先账号，用满后切换</option></select></label>
+          <label>优先账号<select name="preferredUserId">${[...new Map(accounts.map(a => [a.userId, a])).values()].map(a => `<option value="${esc(a.userId)}"${dispatch.preferredUserId === a.userId ? ' selected' : ''}>${esc(a.nickname || a.userId)} · ${esc(a.userId)}</option>`).join('')}</select></label>
+          <button type="submit">保存策略</button>
+        </form>
         <div class="table-wrap wide-table">
-          <table>
+          <table class="account-table">
             <thead>
               <tr>
                 <th>账号池</th>
@@ -566,19 +595,21 @@ export const page = ({
                 <th>昵称</th>
                 <th>VIP 类型</th>
                 <th>到期时间</th>
-                <th>下次自动刷新</th>
-                <th>下次自动领取</th>
+                <th>登录</th>
+                <th>调度</th>
+                <th>本分钟用量</th>
+                <th title="0 表示不限；缓存命中不计额度">上限 / 分钟</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              ${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(item.userId || '-')}</td><td>${esc(item.nickname || '-')}</td><td>${esc(item.vipType || '-')}</td><td>${esc(item.expireTime || '-')}</td><td>${esc(time(item.state?.nextRefreshAt))}</td><td>${esc(time(item.state?.nextClaimAt))}</td></tr>`).join('')}
+              ${accountRows.map(item => `<tr data-account-id="${esc(item.id)}"><td>${esc(item.pool?.label || '-')}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(item.userId)}</td><td>${esc(item.nickname || '-')}</td><td>${esc(item.vipType || '-')}</td><td>${esc(item.expireTime || '-')}</td><td>${esc(item.loginLabel)}</td><td><span class="route-state${item.preferred && item.routing.enabled ? ' primary' : ''}">${esc(item.role)}</span></td><td>${item.routing.used} / ${item.routing.limit || '不限'}</td><td><form class="quota-form" method="post" action="${root(basePath)}/dispatch/limit"><input type="hidden" name="id" value="${esc(item.id)}"><input aria-label="${esc(item.nickname || item.userId)} ${esc(item.platform)} 每分钟上限" type="number" name="limit" min="0" max="100000" step="1" required value="${item.routing.limit}"><button class="ghost" type="submit">保存</button></form></td><td><div class="account-actions">${['check', 'refresh'].map(action => `<form method="post" action="${root(basePath)}/accounts/action"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="action" value="${action}"><button class="ghost" type="submit">${action === 'check' ? '检测' : '刷新'}</button></form>`).join('')}<form method="post" action="${root(basePath)}/dispatch/enabled"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="enabled" value="${item.routing.enabled ? '0' : '1'}"><button class="ghost" type="submit">${item.routing.enabled ? '暂停' : '启用'}</button></form></div></td></tr>`).join('')}
             </tbody>
           </table>
         </div>
         <details class="section-details"><summary>会话详情</summary><div class="mini">
-          ${pools.map(item => `<div class="subcard"><strong>${esc(item.label)}</strong><div>Token：${esc(item.token || '-')}</div><div>DFID：${esc(item.dfid || '-')}</div><div>MID：${esc(item.mid || '-')}</div><div>上游：<code>${esc(item.upstreamUrl || '-')}</code></div><div>最近资料同步：${esc(time(item.state?.lastProfileAt))}</div></div>`).join('')}
+          ${accountRows.map(item => `<div class="subcard"><strong>${esc(item.nickname || item.userId)} · ${esc(platformDisplayLabel(item.platform))}</strong><div>下次刷新：${esc(time(item.state.nextRefreshAt))}</div><div>下次领取：${esc(time(item.state.nextClaimAt))}</div><div>Token 摘要：${esc(item.auth?.token || '-')}</div><div>设备摘要：${esc(item.auth?.guid || item.auth?.mid || '-')}</div></div>`).join('')}
         </div></details>
-        ${accounts.filter(account => !pools.some(pool => pool.accountId === account.id)).length ? `<details><summary>备用账号</summary><div class="table-wrap"><table><thead><tr><th>平台</th><th>用户 ID</th><th>昵称</th><th>操作</th></tr></thead><tbody>${accounts.filter(account => !pools.some(pool => pool.accountId === account.id)).map(account => `<tr><td>${esc(platformDisplayLabel(account.platform))}</td><td>${esc(account.userId)}</td><td>${esc(account.nickname || '-')}</td><td>${pools.filter(pool => pool.platform === account.platform).map(pool => `<form method="post" action="${root(basePath)}/accounts/activate"><input type="hidden" name="pool" value="${esc(pool.pool)}"><input type="hidden" name="id" value="${esc(account.id)}"><button class="ghost" type="submit">启用到${esc(pool.label)}</button></form>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
       </section>
       <section class="card">
         <h2>二维码 / 短信登录</h2>
@@ -853,6 +884,26 @@ export default async (c) => {
   const denied = needAuth(c, basePath)
   if (denied) return denied
 
+  if (c.req.method === 'POST' && c.req.path.endsWith('/dispatch/policy')) {
+    const result = await saveKugouDispatchPolicy(await getForm(c))
+    return respond(c, basePath, result, result.message)
+  }
+  if (c.req.method === 'POST' && c.req.path.endsWith('/dispatch/limit')) {
+    const form = await getForm(c)
+    const result = await setKugouAccountLimit(form.id, form.limit)
+    return respond(c, basePath, result, result.message)
+  }
+  if (c.req.method === 'POST' && c.req.path.endsWith('/dispatch/enabled')) {
+    const form = await getForm(c)
+    const result = await setKugouAccountEnabled(form.id, form.enabled === '1')
+    return respond(c, basePath, result, result.message)
+  }
+  if (c.req.method === 'POST' && c.req.path.endsWith('/accounts/action')) {
+    const form = await getForm(c)
+    const result = await runKugouAccountAction(form.id, form.action)
+    return respond(c, basePath, result, result.message)
+  }
+
   if (c.req.method === 'POST' && c.req.path.endsWith('/accounts/activate')) {
     const form = await getForm(c)
     const result = await activateKugouAccount(normalizePool(form.pool), form.id)
@@ -1035,6 +1086,9 @@ export default async (c) => {
   ])
 
   const pools = [premium, general]
+  for (const item of pools) {
+    if (item.accountId && !(await getSavedKugouAccount(item.accountId))) await saveKugouAccount(await readCookieFile('kugou', item.pool), item.platform, item.state.account, item.state.sessionStatus)
+  }
   const warnings = []
   if (!hasKugouUpstreamAuth()) {
     warnings.push('当前没有配置 Kugou upstream URL；请至少配置默认版或 Lite 版 upstream，管理动作和 Lite 领取才会生效。')
@@ -1052,6 +1106,7 @@ export default async (c) => {
     procs,
     pools,
     accounts: await listKugouAccounts(),
+    dispatch: await getKugouDispatchSnapshot(),
     mon,
     qrSessions: { premium: qr[0], general: qr[1] },
     smsSessions: { premium: sms[0], general: sms[1] },

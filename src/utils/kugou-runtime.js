@@ -107,6 +107,7 @@ export function recordKugouRequest ({
   reason,
   cacheHit,
   countTowardQuota = !cacheHit,
+  enforceQuota = true,
   exemptTag = ''
 }) {
   if (pool !== 'premium' && pool !== 'general') return
@@ -139,7 +140,7 @@ export function recordKugouRequest ({
   }
 
   const quotaState = peekKugouQuota(pool)
-  if (!quotaState.allowed) {
+  if (enforceQuota && !quotaState.allowed) {
     state.blocked[pool] += 1
     return {
       allowed: false,

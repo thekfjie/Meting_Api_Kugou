@@ -89,11 +89,12 @@ test('account actions require authentication on both aliases', async () => {
   }
 })
 
-test('dashboard escapes account data and lists standby accounts without secrets', async () => {
+test('dashboard lists every login directly and escapes account data without secrets', async () => {
   const accounts = await listKugouAccounts()
   accounts[0].nickname = '<script>window.leaked=true</script>'
   const html = page({ basePath: '/music', pools: [], accounts, mon: {}, procs: [], logs: [], qrSessions: {}, smsSessions: {}, warnings: [], quickProcessNames: [] })
-  assert.ok(html.includes('备用'))
+  assert.equal((html.match(/data-account-id=/g) || []).length, accounts.length)
+  assert.ok(!html.includes('<summary>备用账号</summary>'))
   assert.ok(html.includes('&lt;script&gt;window.leaked=true&lt;/script&gt;'))
   assert.equal(html.includes('<script>window.leaked=true</script>'), false)
   for (const secret of ['first-private-token', 'second-private-token', 'standby-private-token', 'default-private-token']) assert.equal(html.includes(secret), false)

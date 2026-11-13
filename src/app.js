@@ -12,7 +12,8 @@ const adminActions = [
   'login', 'logout', 'pm2', 'pool/clear', 'pool/copy', 'pool/move',
   'kugou/qr/start', 'kugou/qr/check', 'kugou/qr/apply', 'kugou/refresh',
   'kugou/status/refresh', 'kugou/vip/claim', 'kugou/vip/claim-all',
-  'kugou/captcha/send', 'kugou/captcha/login', 'kugou/session/check', 'accounts/activate'
+  'kugou/captcha/send', 'kugou/captcha/login', 'kugou/session/check', 'accounts/activate',
+  'dispatch/policy', 'dispatch/limit', 'dispatch/enabled', 'accounts/action'
 ]
 
 // Constructing the app does not open ports or start account jobs.

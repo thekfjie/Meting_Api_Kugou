@@ -32,6 +32,7 @@ const createRuntimeState = () => ({
 const createDefaultState = () => ({
   version: 3,
   accounts: {},
+  dispatch: { mode: 'balanced', preferredUserId: '', limits: {}, disabled: [] },
   pools: {
     premium: createPoolState(),
     general: createPoolState()
@@ -54,6 +55,12 @@ const normalizePoolState = (value = {}) => ({
 const normalizeState = (value = {}) => ({
   version: 3,
   accounts: value?.accounts || {},
+  dispatch: {
+    mode: value?.dispatch?.mode === 'priority' ? 'priority' : 'balanced',
+    preferredUserId: String(value?.dispatch?.preferredUserId || ''),
+    limits: value?.dispatch?.limits || {},
+    disabled: Array.isArray(value?.dispatch?.disabled) ? value.dispatch.disabled : []
+  },
   pools: {
     premium: normalizePoolState(value?.pools?.premium),
     general: normalizePoolState(value?.pools?.general)
