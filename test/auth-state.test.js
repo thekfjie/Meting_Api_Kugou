@@ -24,7 +24,7 @@ test('simultaneous pool and login updates survive atomic persistence', async () 
     assert.equal((await getKugouAdminPoolState(i % 2 ? 'general' : 'premium'))[`fixture${i}`], i)
   }
   const saved = JSON.parse(await readFile(getKugouAdminStatePath(), 'utf8'))
-  assert.equal(saved.version, 2)
+  assert.equal(saved.version, 3)
   assert.equal(saved.sessions.qrLogin.general.key, 'old-qr')
   assert.equal(saved.sessions.qrLogin.premium.key, 'new-qr')
 })

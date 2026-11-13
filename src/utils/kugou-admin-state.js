@@ -30,7 +30,8 @@ const createRuntimeState = () => ({
 })
 
 const createDefaultState = () => ({
-  version: 2,
+  version: 3,
+  accounts: {},
   pools: {
     premium: createPoolState(),
     general: createPoolState()
@@ -51,7 +52,8 @@ const normalizePoolState = (value = {}) => ({
 })
 
 const normalizeState = (value = {}) => ({
-  version: 2,
+  version: 3,
+  accounts: value?.accounts || {},
   pools: {
     premium: normalizePoolState(value?.pools?.premium),
     general: normalizePoolState(value?.pools?.general)
@@ -90,6 +92,7 @@ export async function readKugouAdminState () {
     cachedState = normalizeState(JSON.parse(raw))
     return cachedState
   } catch (error) {
+    if (error.code !== 'ENOENT') throw error
     cachedState = createDefaultState()
     return cachedState
   }

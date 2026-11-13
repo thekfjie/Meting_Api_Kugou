@@ -2,8 +2,9 @@ import crypto from 'node:crypto'
 import { writeFile, mkdir, copyFile, rename, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import config from '../config.js'
-import { clearCookieCache } from './cookie.js'
+import { clearCookieCache, readCookiePoolFile } from './cookie.js'
 import { getKugouPoolPlatform } from './kugou-upstream-runtime.js'
+import { saveKugouAccount } from './kugou-accounts.js'
 
 const SESSION_COOKIE = 'meting_admin_session'
 
@@ -143,6 +144,10 @@ export const normalizeKugouCookieForMeting = ({ existingCookie = '', upstreamCoo
 }
 
 export const writeCookiePool = async (pool, value) => {
+  const platform = getKugouPoolPlatform(pool)
+  const previous = await readCookiePoolFile('kugou', pool)
+  if (previous) await saveKugouAccount(previous, platform)
+  if (value) await saveKugouAccount(value, platform)
   const cookieDir = resolve(process.cwd(), 'cookie')
   await mkdir(cookieDir, { recursive: true })
   const target = pool === 'premium' ? 'kugou-premium' : 'kugou-general'
@@ -158,6 +163,8 @@ const getPoolFilePath = (pool) => {
 }
 
 export const clearCookiePool = async (pool) => {
+  const previous = await readCookiePoolFile('kugou', pool)
+  if (previous) await saveKugouAccount(previous, getKugouPoolPlatform(pool))
   const filePath = getPoolFilePath(pool)
   try {
     await unlink(filePath)

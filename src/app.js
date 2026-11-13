@@ -12,7 +12,7 @@ const adminActions = [
   'login', 'logout', 'pm2', 'pool/clear', 'pool/copy', 'pool/move',
   'kugou/qr/start', 'kugou/qr/check', 'kugou/qr/apply', 'kugou/refresh',
   'kugou/status/refresh', 'kugou/vip/claim', 'kugou/vip/claim-all',
-  'kugou/captcha/send', 'kugou/captcha/login'
+  'kugou/captcha/send', 'kugou/captcha/login', 'kugou/session/check', 'accounts/activate'
 ]
 
 // Constructing the app does not open ports or start account jobs.
@@ -30,7 +30,7 @@ export const createApp = () => {
       c.set('streamAudio', true)
       return apiService(c)
     })
-    for (const page of ['', '/login', '/monitor']) {
+    for (const page of ['', '/login', '/monitor', '/assets/admin.css', '/assets/admin-client.js']) {
       app.get(`${prefix}/${alias}/manage${page}`, adminService)
     }
     for (const action of adminActions) {

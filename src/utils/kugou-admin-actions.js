@@ -9,9 +9,12 @@ import { inspectCookieSource, readCookieFile, readCookiePoolFile } from './cooki
 import {
   fetchKugouLoginProfile,
   hasKugouUpstreamAuth,
-  refreshKugouLogin
+  refreshKugouLogin,
+  requestKugouUpstream,
+  buildKugouUpstreamAuthCookie
 } from './kugou-upstream-auth.js'
-import { setKugouAdminPoolState } from './kugou-admin-state.js'
+import { getKugouAdminPoolState, setKugouAdminPoolState } from './kugou-admin-state.js'
+import { getSavedKugouAccount, saveKugouAccount } from './kugou-accounts.js'
 import { getKugouPoolPlatform, isKugouPoolLite, shouldAutoClaimKugouPool } from './kugou-upstream-runtime.js'
 import { kugouAuthSummary, logKugouAuth } from './kugou-auth-log.js'
 import {
@@ -252,7 +255,8 @@ export const syncKugouPoolProfile = async (pool, { record = true } = {}) => {
 
   const profile = await fetchKugouLoginProfile(cookie, normalizedPool)
   const account = summarizeKugouProfile(profile)
-  const ok = Boolean(account.userId || account.vipType || account.expireTime)
+  account.userId = account.userId || parseSimpleCookie(cookie).KugooID || ''
+  const ok = Number(profile?.detail?.status) === 1 && Boolean(account.nickname || account.vipType || account.expireTime)
 
   if (record) {
     await setKugouAdminPoolState(normalizedPool, {
@@ -268,16 +272,11 @@ export const syncKugouPoolProfile = async (pool, { record = true } = {}) => {
     })
   }
 
-  return {
-    ok,
-    pool: normalizedPool,
-    at,
-    profile,
-    account
-  }
+  if (ok) await saveKugouAccount(cookie, getKugouPoolPlatform(normalizedPool), account)
+  return { ok, pool: normalizedPool, at, profile, account }
 }
 
-export const applyKugouPoolCookieMap = (pool, cookieMap = {}, { trigger = 'manual' } = {}) => withPoolOperation(pool, async () => {
+export const applyKugouPoolCookieMap = (pool, cookieMap = {}, { trigger = 'manual', activate = true } = {}) => withPoolOperation(pool, async () => {
   const normalizedPool = normalizePool(pool)
   const at = nowIso()
   const sourceInfo = await inspectCookieSource('kugou', normalizedPool)
@@ -305,6 +304,19 @@ export const applyKugouPoolCookieMap = (pool, cookieMap = {}, { trigger = 'manua
   }
 
   const activeCookie = await readCookieFile('kugou', normalizedPool)
+  if (!activate) {
+    const cookie = normalizeKugouCookieForMeting({ upstreamCookie: stringifyCookie({ ...cookieMap, KUGOU_API_PLATFORM: getKugouPoolPlatform(normalizedPool) }) })
+    await saveKugouAccount(cookie, getKugouPoolPlatform(normalizedPool))
+    try {
+      const profile = summarizeKugouProfile(await fetchKugouLoginProfile(cookie, normalizedPool))
+      await saveKugouAccount(cookie, getKugouPoolPlatform(normalizedPool), profile)
+    } catch {}
+    return { ok: true, pool: normalizedPool, action: 'save', message: '登录态已保存为备用，当前池账号未更换' }
+  }
+  if (activeCookie) {
+    const previous = await getKugouAdminPoolState(normalizedPool)
+    await saveKugouAccount(activeCookie, getKugouPoolPlatform(normalizedPool), previous.account, previous.sessionStatus)
+  }
   await persistPoolCookie({
     pool: normalizedPool,
     activeCookie,
@@ -315,6 +327,7 @@ export const applyKugouPoolCookieMap = (pool, cookieMap = {}, { trigger = 'manua
   const profileResult = await syncKugouPoolProfile(normalizedPool)
 
   await setKugouAdminPoolState(normalizedPool, {
+    sessionStatus: null,
     nextRefreshAt: buildNextRefreshAt(),
     ...buildClaimSchedulePatch(normalizedPool),
     ...(profileResult.account ? { lastProfileAt: profileResult.at, account: profileResult.account } : {}),
@@ -332,6 +345,62 @@ export const applyKugouPoolCookieMap = (pool, cookieMap = {}, { trigger = 'manua
     activeKey: sourceInfo.activeKey,
     account: profileResult.account || null
   }
+})
+
+export const activateKugouAccount = (pool, id) => withPoolOperation(pool, async () => {
+  const platform = getKugouPoolPlatform(pool)
+  const saved = await getSavedKugouAccount(id)
+  if (!saved || saved.platform !== platform) return { ok: false, message: '账号版本与目标池不匹配' }
+  if ((await inspectCookieSource('kugou', pool)).source === 'env') return { ok: false, message: '当前池由环境变量管理，请先移除 Cookie 覆盖后再切换' }
+  let profile
+  try {
+    const response = await fetchKugouLoginProfile(saved.cookie, pool)
+    if (Number(response?.detail?.status) !== 1) return { ok: false, message: '备用账号登录已失效，请重新登录；当前池账号已保留' }
+    profile = summarizeKugouProfile(response)
+    profile.userId = profile.userId || saved.userId
+  } catch {
+    return { ok: false, message: '暂时无法验证备用账号，当前池未切换，请稍后重试' }
+  }
+  const current = await readCookieFile('kugou', pool)
+  const state = await getKugouAdminPoolState(pool)
+  if (current) await saveKugouAccount(current, platform, state.account, state.sessionStatus)
+  await writeCookiePool(pool, saved.cookie)
+  await setKugouAdminPoolState(pool, {
+    account: profile,
+    sessionStatus: saved.sessionStatus || null,
+    lastRefreshAt: '',
+    lastRefreshResult: null,
+    lastClaimAt: '',
+    lastClaimResult: null,
+    lastProfileAt: '',
+    nextRefreshAt: buildNextRefreshAt(),
+    ...buildClaimSchedulePatch(pool),
+    lastError: null
+  })
+  await saveKugouAccount(saved.cookie, platform, profile, saved.sessionStatus)
+  return { ok: true, pool, message: '当前账号已切换，原账号已保留在账号列表中' }
+})
+
+export const checkKugouPoolSession = pool => withPoolOperation(pool, async () => {
+  const cookie = await readCookieFile('kugou', pool)
+  const auth = kugouAuthSummary(cookie)
+  const result = { status: 'unknown', checkedAt: nowIso(), token: auth.token }
+  if (!cookie) result.status = 'missing'
+  else {
+    try {
+      const check = async path => {
+        const r = await requestKugouUpstream(path, { pool, cookie: buildKugouUpstreamAuthCookie({ cookie }), query: { timestamp: Date.now() } })
+        return { http: r?.status, status: r?.body?.status, errorCode: r?.body?.error_code ?? 0 }
+      }
+      result.profile = await check('/user/detail')
+      result.device = await check('/login/device')
+      result.status = [result.profile, result.device].every(r => r.http === 200 && Number(r.status) === 1 && Number(r.errorCode) === 0) ? 'valid' : 'invalid'
+    } catch (error) { result.error = error.code || 'NETWORK_ERROR' }
+  }
+  await setKugouAdminPoolState(pool, { sessionStatus: result })
+  const state = await getKugouAdminPoolState(pool)
+  if (cookie) await saveKugouAccount(cookie, getKugouPoolPlatform(pool), state.account, result)
+  return { ok: result.status === 'valid', pool, sessionStatus: result, message: result.status === 'valid' ? '登录状态有效' : result.status === 'invalid' ? '登录校验未通过，请重新登录' : '暂时无法确认登录状态，请稍后重试' }
 })
 
 export const refreshKugouPool = (pool, { trigger = 'manual' } = {}) => withPoolOperation(pool, async () => {
