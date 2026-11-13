@@ -1,5 +1,6 @@
 import config from '../config.js'
 import { getKugouPoolUpstreamUrl } from './kugou-upstream-runtime.js'
+import { kugouAuthSummary, logKugouAuth } from './kugou-auth-log.js'
 
 export class KugouUpstreamError extends Error {
   constructor (message, { code, status, cause } = {}) {
@@ -35,10 +36,17 @@ export const requestKugouUpstream = async (path, {
     }
   }
 
-  const headers = new Headers({ Accept: 'application/json, text/plain, */*' })
+  const headers = new Headers({
+    Accept: 'application/json, text/plain, */*',
+    // The upstream cache keys only on the URL and can replay another login's cookies.
+    'X-Apicache-Bypass': '1'
+  })
   if (cookie) headers.set('Cookie', cookie)
   for (const [key, value] of Object.entries(extraHeaders || {})) headers.set(key, value)
   if (body !== null) headers.set('Content-Type', 'application/json; charset=utf-8')
+
+  const traceAuth = /^\/(login\/|captcha\/|register\/dev|user\/detail|user\/vip\/detail)/.test(path)
+  if (traceAuth) logKugouAuth(pool, 'request', { path, auth: kugouAuthSummary(cookie) })
 
   let response
   let text
@@ -52,6 +60,7 @@ export const requestKugouUpstream = async (path, {
     text = await response.text()
   } catch (cause) {
     const code = cause.name === 'TimeoutError' ? 'TIMEOUT' : 'NETWORK_ERROR'
+    if (traceAuth) logKugouAuth(pool, 'error', { path, code })
     throw new KugouUpstreamError(`Kugou upstream ${code.toLowerCase()}`, { code, cause })
   }
 
@@ -60,8 +69,20 @@ export const requestKugouUpstream = async (path, {
     parsed = JSON.parse(stripEnvelope(text))
     if (parsed === null || typeof parsed !== 'object') throw new Error('Expected JSON object or array')
   } catch (cause) {
+    if (traceAuth) logKugouAuth(pool, 'error', { path, code: 'INVALID_RESPONSE', httpStatus: response.status })
     throw new KugouUpstreamError('Kugou upstream returned invalid JSON', {
       code: 'INVALID_RESPONSE', status: response.status, cause
+    })
+  }
+
+  if (traceAuth) {
+    logKugouAuth(pool, 'response', {
+      path,
+      httpStatus: response.status,
+      status: parsed.status ?? null,
+      errorCode: parsed.error_code ?? parsed.errcode ?? null,
+      qrStatus: path === '/login/qr/check' ? parsed.data?.status ?? null : null,
+      auth: kugouAuthSummary(response.headers.getSetCookie().map(line => line.split(';')[0]).join('; '))
     })
   }
 

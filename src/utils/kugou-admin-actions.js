@@ -12,7 +12,8 @@ import {
   refreshKugouLogin
 } from './kugou-upstream-auth.js'
 import { setKugouAdminPoolState } from './kugou-admin-state.js'
-import { isKugouPoolLite, shouldAutoClaimKugouPool } from './kugou-upstream-runtime.js'
+import { getKugouPoolPlatform, isKugouPoolLite, shouldAutoClaimKugouPool } from './kugou-upstream-runtime.js'
+import { kugouAuthSummary, logKugouAuth } from './kugou-auth-log.js'
 import {
   fetchKugouVipDetail,
   performKugouLiteVipClaim,
@@ -24,6 +25,17 @@ const KUGOU_POOLS = ['premium', 'general']
 const nowIso = () => new Date().toISOString()
 const normalizePool = pool => (pool === 'general' ? 'general' : 'premium')
 const normalizeText = value => String(value || '').trim()
+const poolOperations = new Map()
+const withPoolOperation = (pool, action) => {
+  const key = normalizePool(pool)
+  const operation = (poolOperations.get(key) || Promise.resolve()).then(action)
+  poolOperations.set(key, operation.catch(() => {}))
+  return operation
+}
+
+const hasLoginCredentials = (cookieMap) => {
+  return Boolean(cookieMap?.token && !['undefined', 'null'].includes(cookieMap.token) && /^[1-9]\d*$/.test(String(cookieMap.userid || '')))
+}
 
 const pickText = (...values) => {
   for (const value of values) {
@@ -59,7 +71,7 @@ const extractMessage = body => pickText(
 )
 
 const isRefreshSuccess = response => {
-  if (!response?.body) return false
+  if (!response?.body || !hasLoginCredentials(response.cookieMap)) return false
   if (response.body.status !== undefined && response.body.status !== null && response.body.status !== '') {
     return Number(response.body.status) === 1
   }
@@ -153,10 +165,10 @@ const getPoolPersistBaseCookie = async (pool, activeCookie = '') => {
   return fileCookie || activeCookie || ''
 }
 
-const persistPoolCookie = async ({ pool, activeCookie = '', cookieMap = {}, profile = null }) => {
-  const baseCookie = await getPoolPersistBaseCookie(pool, activeCookie)
+const persistPoolCookie = async ({ pool, activeCookie = '', cookieMap = {}, profile = null, replace = false }) => {
+  const baseCookie = replace ? '' : await getPoolPersistBaseCookie(pool, activeCookie)
   const upstreamCookie = buildCookieUpdatePayload({
-    existingCookie: activeCookie || baseCookie,
+    existingCookie: replace ? '' : activeCookie || baseCookie,
     cookieMap,
     profile
   })
@@ -165,6 +177,7 @@ const persistPoolCookie = async ({ pool, activeCookie = '', cookieMap = {}, prof
     upstreamCookie
   })
   await writeCookiePool(pool, nextCookie)
+  logKugouAuth(pool, 'persist', { before: kugouAuthSummary(activeCookie), after: kugouAuthSummary(nextCookie) })
   return nextCookie
 }
 
@@ -264,18 +277,19 @@ export const syncKugouPoolProfile = async (pool, { record = true } = {}) => {
   }
 }
 
-export const applyKugouPoolCookieMap = async (pool, cookieMap = {}, { trigger = 'manual' } = {}) => {
+export const applyKugouPoolCookieMap = (pool, cookieMap = {}, { trigger = 'manual' } = {}) => withPoolOperation(pool, async () => {
   const normalizedPool = normalizePool(pool)
   const at = nowIso()
   const sourceInfo = await inspectCookieSource('kugou', normalizedPool)
 
-  if (!cookieMap || Object.keys(cookieMap).length === 0) {
+  if (!hasLoginCredentials(cookieMap) || (cookieMap.KUGOU_API_PLATFORM && cookieMap.KUGOU_API_PLATFORM !== getKugouPoolPlatform(normalizedPool))) {
+    logKugouAuth(normalizedPool, 'write-rejected', { trigger, auth: kugouAuthSummary(stringifyCookie(cookieMap || {})) })
     const result = buildErrorResult({
       action: 'write',
       pool: normalizedPool,
       trigger,
       at,
-      message: '没有可写入的登录态',
+      message: '登录未成功或版本不匹配，保留原有登录态，请在对应版本重新登录',
       sourceInfo
     })
 
@@ -294,7 +308,8 @@ export const applyKugouPoolCookieMap = async (pool, cookieMap = {}, { trigger = 
   await persistPoolCookie({
     pool: normalizedPool,
     activeCookie,
-    cookieMap
+    cookieMap: { ...cookieMap, KUGOU_API_PLATFORM: getKugouPoolPlatform(normalizedPool) },
+    replace: true
   })
 
   const profileResult = await syncKugouPoolProfile(normalizedPool)
@@ -317,9 +332,9 @@ export const applyKugouPoolCookieMap = async (pool, cookieMap = {}, { trigger = 
     activeKey: sourceInfo.activeKey,
     account: profileResult.account || null
   }
-}
+})
 
-export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
+export const refreshKugouPool = (pool, { trigger = 'manual' } = {}) => withPoolOperation(pool, async () => {
   const normalizedPool = normalizePool(pool)
   const at = nowIso()
   const sourceInfo = await inspectCookieSource('kugou', normalizedPool)
@@ -374,9 +389,16 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
   }
 
   try {
+    const current = parseSimpleCookie(activeCookie)
+    if (current.KUGOU_API_PLATFORM && current.KUGOU_API_PLATFORM !== getKugouPoolPlatform(normalizedPool)) {
+      throw new Error('Cookie 与池版本不匹配，请在对应版本重新登录')
+    }
     const response = await refreshKugouLogin(activeCookie, normalizedPool)
     if (!isRefreshSuccess(response)) {
       throw new Error(extractMessage(response.body) || 'upstream 未返回新的登录态')
+    }
+    if (String(response.cookieMap.userid) !== String(current.KugooID)) {
+      throw new Error('刷新返回的账号与当前池不一致，已保留原有登录态')
     }
 
     await persistPoolCookie({
@@ -412,6 +434,7 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
 
     return result
   } catch (error) {
+    logKugouAuth(normalizedPool, 'refresh-failed', { trigger, auth: kugouAuthSummary(activeCookie) })
     const result = buildErrorResult({
       action: 'refresh',
       pool: normalizedPool,
@@ -434,9 +457,9 @@ export const refreshKugouPool = async (pool, { trigger = 'manual' } = {}) => {
 
     return result
   }
-}
+})
 
-export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
+export const claimKugouLiteVip = (pool, { trigger = 'manual' } = {}) => withPoolOperation(pool, async () => {
   const normalizedPool = normalizePool(pool)
   const at = nowIso()
   const sourceInfo = await inspectCookieSource('kugou', normalizedPool)
@@ -615,7 +638,7 @@ export const claimKugouLiteVip = async (pool, { trigger = 'manual' } = {}) => {
 
     return result
   }
-}
+})
 
 export const claimAllKugouLiteVip = async ({ trigger = 'manual' } = {}) => {
   const at = nowIso()

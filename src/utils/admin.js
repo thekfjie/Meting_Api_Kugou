@@ -3,6 +3,7 @@ import { writeFile, mkdir, copyFile, rename, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import config from '../config.js'
 import { clearCookieCache } from './cookie.js'
+import { getKugouPoolPlatform } from './kugou-upstream-runtime.js'
 
 const SESSION_COOKIE = 'meting_admin_session'
 
@@ -145,7 +146,9 @@ export const writeCookiePool = async (pool, value) => {
   const cookieDir = resolve(process.cwd(), 'cookie')
   await mkdir(cookieDir, { recursive: true })
   const target = pool === 'premium' ? 'kugou-premium' : 'kugou-general'
-  await writeFile(resolve(cookieDir, target), String(value || '').trim(), 'utf8')
+  const targetPath = resolve(cookieDir, target)
+  await writeFile(`${targetPath}.tmp`, String(value || '').trim(), { encoding: 'utf8', mode: 0o600 })
+  await rename(`${targetPath}.tmp`, targetPath)
   clearCookieCache()
 }
 
@@ -165,13 +168,21 @@ export const clearCookiePool = async (pool) => {
 }
 
 export const copyCookiePool = async (fromPool, toPool) => {
+  assertSamePlatform(fromPool, toPool)
   await mkdir(resolve(process.cwd(), 'cookie'), { recursive: true })
   await copyFile(getPoolFilePath(fromPool), getPoolFilePath(toPool))
   clearCookieCache()
 }
 
 export const moveCookiePool = async (fromPool, toPool) => {
+  assertSamePlatform(fromPool, toPool)
   await mkdir(resolve(process.cwd(), 'cookie'), { recursive: true })
   await rename(getPoolFilePath(fromPool), getPoolFilePath(toPool))
   clearCookieCache()
+}
+
+const assertSamePlatform = (fromPool, toPool) => {
+  if (getKugouPoolPlatform(fromPool) !== getKugouPoolPlatform(toPool)) {
+    throw new Error('普通版与概念版的登录态不能直接复制或迁移，请在目标池单独登录同一账号')
+  }
 }

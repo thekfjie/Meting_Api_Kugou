@@ -1,9 +1,15 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 const statePath = resolve(process.cwd(), 'data', 'kugou-admin-state.json')
 
 let cachedState = null
+let pendingUpdate = Promise.resolve()
+
+const normalizeLoginSessions = (value = {}) => {
+  if (value?.pool) return { premium: null, general: null, [value.pool]: value }
+  return { premium: value?.premium || null, general: value?.general || null }
+}
 
 const createPoolState = () => ({
   lastRefreshAt: '',
@@ -24,7 +30,7 @@ const createRuntimeState = () => ({
 })
 
 const createDefaultState = () => ({
-  version: 1,
+  version: 2,
   pools: {
     premium: createPoolState(),
     general: createPoolState()
@@ -34,8 +40,8 @@ const createDefaultState = () => ({
     general: createRuntimeState()
   },
   sessions: {
-    qrLogin: null,
-    smsLogin: null
+    qrLogin: normalizeLoginSessions(),
+    smsLogin: normalizeLoginSessions()
   }
 })
 
@@ -45,7 +51,7 @@ const normalizePoolState = (value = {}) => ({
 })
 
 const normalizeState = (value = {}) => ({
-  version: Number(value?.version || 1),
+  version: 2,
   pools: {
     premium: normalizePoolState(value?.pools?.premium),
     general: normalizePoolState(value?.pools?.general)
@@ -61,15 +67,17 @@ const normalizeState = (value = {}) => ({
     }
   },
   sessions: {
-    qrLogin: value?.sessions?.qrLogin || null,
-    smsLogin: value?.sessions?.smsLogin || null
+    qrLogin: normalizeLoginSessions(value?.sessions?.qrLogin),
+    smsLogin: normalizeLoginSessions(value?.sessions?.smsLogin)
   }
 })
 
 const persistState = async (state) => {
   const normalized = normalizeState(state)
   await mkdir(dirname(statePath), { recursive: true })
-  await writeFile(statePath, JSON.stringify(normalized, null, 2), 'utf8')
+  const tempPath = `${statePath}.tmp`
+  await writeFile(tempPath, JSON.stringify(normalized, null, 2), { encoding: 'utf8', mode: 0o600 })
+  await rename(tempPath, statePath)
   cachedState = normalized
   return normalized
 }
@@ -87,11 +95,15 @@ export async function readKugouAdminState () {
   }
 }
 
-export async function updateKugouAdminState (mutator) {
-  const current = normalizeState(await readKugouAdminState())
-  const draft = structuredClone(current)
-  const next = await mutator(draft)
-  return persistState(next || draft)
+export function updateKugouAdminState (mutator) {
+  const operation = pendingUpdate.then(async () => {
+    const current = normalizeState(await readKugouAdminState())
+    const draft = structuredClone(current)
+    const next = await mutator(draft)
+    return persistState(next || draft)
+  })
+  pendingUpdate = operation.catch(() => {})
+  return operation
 }
 
 export async function getKugouAdminPoolState (pool) {
@@ -126,20 +138,24 @@ export async function setKugouRuntimeProfile (pool, patch) {
   })
 }
 
-export async function getKugouAdminSession (key) {
+export async function getKugouAdminSession (key, pool) {
   const state = await readKugouAdminState()
-  const value = state.sessions?.[key] || null
+  const sessions = state.sessions?.[key] || {}
+  // Requests without a pool keep the old behavior: use the most recent session.
+  const value = pool
+    ? sessions[pool] || null
+    : Object.values(sessions).filter(Boolean).sort((a, b) => Number(b.expiresAt) - Number(a.expiresAt))[0] || null
 
   if (!value?.expiresAt) return value
   if (Number(value.expiresAt) >= Date.now()) return value
 
-  await setKugouAdminSession(key, null)
+  await setKugouAdminSession(key, null, value.pool)
   return null
 }
 
-export async function setKugouAdminSession (key, value) {
+export async function setKugouAdminSession (key, value, pool = value?.pool || 'premium') {
   return updateKugouAdminState((state) => {
-    state.sessions[key] = value || null
+    state.sessions[key][pool] = value || null
     return state
   })
 }

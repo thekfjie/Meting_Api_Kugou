@@ -34,6 +34,12 @@ const getAuthCookie = ({ cookie = '', dfid = '' } = {}) => {
   if (parsed.vip_type !== undefined) out.push(`vip_type=${parsed.vip_type}`)
   if (parsed.vip_token !== undefined) out.push(`vip_token=${parsed.vip_token}`)
   if (normalizedDfid) out.push(`dfid=${normalizedDfid}`)
+  // A token belongs to the device that logged in, not the upstream process.
+  const mid = parsed.KUGOU_API_MID || parsed.mid || parsed.kg_mid || parsed.kg_mid_temp
+  if (mid) out.push(`KUGOU_API_MID=${mid}`)
+  for (const key of ['KUGOU_API_GUID', 'KUGOU_API_DEV', 'KUGOU_API_MAC', 'KUGOU_API_PLATFORM']) {
+    if (parsed[key]) out.push(`${key}=${parsed[key]}`)
+  }
   return out.join('; ')
 }
 
@@ -45,8 +51,9 @@ export const mergeKugouSetCookies = mergeCookies
 export const kugouCookieMapToHeader = cookieMapToHeader
 export const buildKugouUpstreamAuthCookie = getAuthCookie
 
-export const fetchKugouQrLogin = async (pool = 'premium') => {
-  const keyResp = await request('/login/qr/key', { query: { timestamp: Date.now() }, pool })
+export const fetchKugouQrLogin = async (pool = 'premium', cookieMap = {}) => {
+  const cookie = cookieMapToHeader(cookieMap)
+  const keyResp = await request('/login/qr/key', { query: { timestamp: Date.now() }, cookie, pool })
   const key = keyResp?.body?.data?.qrcode
   if (!key) return null
 
@@ -56,6 +63,7 @@ export const fetchKugouQrLogin = async (pool = 'premium') => {
       qrimg: 1,
       timestamp: Date.now()
     },
+    cookie,
     pool
   })
 
@@ -105,12 +113,13 @@ export const loginKugouCellphone = async ({ mobile, code, cookieMap = {}, pool =
   }
 }
 
-export const checkKugouQrLogin = async (key, pool = 'premium') => {
+export const checkKugouQrLogin = async (key, pool = 'premium', deviceCookieMap = {}) => {
   const response = await request('/login/qr/check', {
     query: {
       key,
       timestamp: Date.now()
     },
+    cookie: cookieMapToHeader(deviceCookieMap),
     pool
   })
 

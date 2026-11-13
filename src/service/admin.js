@@ -216,9 +216,9 @@ const monitor = async (force = false) => {
   })
 }
 
-const qrState = async () => getKugouAdminSession('qrLogin')
-const setQrState = async (value) => setKugouAdminSession('qrLogin', value ? { ...value, expiresAt: Date.now() + 5 * 60 * 1000 } : null)
-const smsState = async () => getKugouAdminSession('smsLogin')
+const qrState = async (pool) => getKugouAdminSession('qrLogin', pool)
+const setQrState = async (value) => setKugouAdminSession('qrLogin', value ? { ...value, expiresAt: value.expiresAt || Date.now() + 5 * 60 * 1000 } : null)
+const smsState = async (pool) => getKugouAdminSession('smsLogin', pool)
 const setSmsState = async (value) => setKugouAdminSession('smsLogin', value ? { ...value, expiresAt: Date.now() + 10 * 60 * 1000 } : null)
 
 const poolView = async (pool) => {
@@ -442,8 +442,8 @@ const page = ({
   procs,
   pools,
   mon,
-  qr,
-  sms,
+  qrSessions,
+  smsSessions,
   platformSummary,
   trace,
   warnings,
@@ -559,7 +559,7 @@ const page = ({
       </section>
       <section class="card">
         <h2>二维码 / 短信登录</h2>
-        <div class="hint">临时登录状态会持久化到 <code>${esc(getKugouAdminStatePath())}</code>，避免进程重启后丢失。</div>
+        <div class="hint">两个池分别保存登录会话，同一账号请按普通版、概念版各登录一次。临时会话会持久化，重启后可继续。</div>
         <h3>二维码登录</h3>
         <div class="split-actions">
           <form method="post" action="${root(basePath)}/kugou/qr/start">
@@ -571,31 +571,30 @@ const page = ({
             <button class="ghost" type="submit">为普通池生成二维码</button>
           </form>
         </div>
-        <div class="actions">
-          <form method="post" action="${root(basePath)}/kugou/qr/check">
-            <button class="ghost" type="submit">检查二维码状态</button>
-          </form>
-        </div>
-        ${qr
-          ? `<div style="margin-top:16px"><div class="hint">当前二维码池：<strong>${esc(getKugouPoolLabel(qr.pool || 'premium'))}</strong><br>状态：${esc(qrLabel(qr.status))}<br>过期时间：${esc(time(qr.expiresAt))}</div>${qr.base64 ? `<img class="qr" src="${esc(qr.base64)}" alt="qr">` : ''}<form method="post" action="${root(basePath)}/kugou/qr/apply" style="margin-top:16px"><button type="submit">写入${esc(getKugouPoolLabel(qr.pool || 'premium'))}</button></form></div>`
-          : '<div class="muted" style="margin-top:16px">当前没有待写入的二维码会话。</div>'}
+        ${pools.map(item => {
+          const qr = qrSessions[item.pool]
+          return qr
+            ? `<div style="margin-top:16px"><div class="hint"><strong>${esc(item.label)} · ${esc(platformDisplayLabel(item.platform))}</strong><br>状态：${esc(qrLabel(qr.status))}<br>过期时间：${esc(time(qr.expiresAt))}</div>${qr.base64 ? `<img class="qr" src="${esc(qr.base64)}" alt="qr">` : ''}<div class="actions"><form method="post" action="${root(basePath)}/kugou/qr/check"><input type="hidden" name="pool" value="${esc(item.pool)}"><button class="ghost" type="submit">检查${esc(item.label)}二维码</button></form><form method="post" action="${root(basePath)}/kugou/qr/apply"><input type="hidden" name="pool" value="${esc(item.pool)}"><button type="submit">写入${esc(item.label)}</button></form></div></div>`
+            : ''
+        }).join('')}
         <h3>短信验证登录</h3>
         <form method="post" action="${root(basePath)}/kugou/captcha/send">
           <label>手机号</label>
-          <input name="mobile" placeholder="请输入手机号" value="${esc(sms?.mobile || '')}">
+          <input name="mobile" placeholder="请输入手机号">
           <label>目标账号池</label>
           <select name="pool">
             <option value="premium">专业池</option>
-            <option value="general"${sms?.pool === 'general' ? ' selected' : ''}>普通池</option>
+            <option value="general">普通池</option>
           </select>
           <button class="ghost" type="submit" style="margin-top:12px">发送验证码</button>
         </form>
-        <form method="post" action="${root(basePath)}/kugou/captcha/login" style="margin-top:16px">
+        ${pools.filter(item => smsSessions[item.pool]).map(item => `<form method="post" action="${root(basePath)}/kugou/captcha/login" style="margin-top:16px">
+          <input type="hidden" name="pool" value="${esc(item.pool)}">
+          <div class="hint">当前短信会话：<strong>${esc(item.label)} · ${esc(platformDisplayLabel(item.platform))}</strong></div>
           <label>短信验证码</label>
           <input name="code" placeholder="输入 6 位验证码">
-          ${sms?.pool ? `<div class="hint" style="margin-top:12px">当前短信会话池：<strong>${esc(getKugouPoolLabel(sms.pool))}</strong>。登录后会直接写入这个池，避免串号。</div>` : '<div class="hint" style="margin-top:12px">请先发送验证码，再完成登录写入。</div>'}
-          <button type="submit" style="margin-top:12px">登录并写入池</button>
-        </form>
+          <button type="submit" style="margin-top:12px">登录并写入${esc(item.label)}</button>
+        </form>`).join('')}
       </section>
       <section class="card">
         <h2>登录态刷新</h2>
@@ -883,22 +882,23 @@ export default async (c) => {
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/qr/start')) {
     const form = await getForm(c)
     const pool = normalizePool(form.pool)
-    const login = await fetchKugouQrLogin(pool)
+    const device = await registerKugouDevice(pool)
+    const login = await fetchKugouQrLogin(pool, device?.cookieMap || {})
     if (!login) {
       return respond(c, basePath, { ok: false, pool }, '生成二维码失败')
     }
-    const device = await registerKugouDevice(pool)
     await setQrState({ ...login, pool, cookieMap: device?.cookieMap || {}, status: 1 })
     return respond(c, basePath, { ok: true, pool, login }, `${getKugouPoolLabel(pool)}二维码已生成`)
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/qr/check')) {
-    const state = await qrState()
+    const form = await getForm(c)
+    const state = await qrState(form.pool ? normalizePool(form.pool) : undefined)
     if (!state) {
       return respond(c, basePath, { ok: false }, '请先生成二维码')
     }
     const pool = normalizePool(state.pool)
-    const result = await checkKugouQrLogin(state.key, pool)
+    const result = await checkKugouQrLogin(state.key, pool, state.cookieMap || {})
     await setQrState({
       ...state,
       ...result,
@@ -912,12 +912,14 @@ export default async (c) => {
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/qr/apply')) {
-    const state = await qrState()
+    const form = await getForm(c)
+    const state = await qrState(form.pool ? normalizePool(form.pool) : undefined)
     if (!state || Number(state.status) !== 4) {
       return respond(c, basePath, { ok: false }, '二维码登录尚未完成，不能写入池')
     }
     const pool = normalizePool(state.pool)
     const result = await applyKugouPoolCookieMap(pool, state.cookieMap || {}, { trigger: 'qr-login' })
+    if (result.ok) await setKugouAdminSession('qrLogin', null, pool)
     return respond(c, basePath, result, result.message)
   }
 
@@ -965,7 +967,7 @@ export default async (c) => {
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/kugou/captcha/login')) {
     const form = await getForm(c)
-    const state = await smsState()
+    const state = await smsState(form.pool ? normalizePool(form.pool) : undefined)
     if (!state?.mobile || !form.code) {
       return respond(c, basePath, { ok: false }, '请先发送验证码并填写短信验证码')
     }
@@ -977,6 +979,7 @@ export default async (c) => {
       pool
     })
     const applied = await applyKugouPoolCookieMap(pool, result.cookieMap || {}, { trigger: 'sms-login' })
+    if (applied.ok) await setKugouAdminSession('smsLogin', null, pool)
     return respond(c, basePath, applied, applied.message)
   }
 
@@ -986,8 +989,8 @@ export default async (c) => {
     poolView('premium'),
     poolView('general'),
     monitor(),
-    qrState(),
-    smsState(),
+    Promise.all(['premium', 'general'].map(pool => qrState(pool))),
+    Promise.all(['premium', 'general'].map(pool => smsState(pool))),
     readRequestSummaries(30)
   ])
 
@@ -1009,8 +1012,8 @@ export default async (c) => {
     procs,
     pools,
     mon,
-    qr,
-    sms,
+    qrSessions: { premium: qr[0], general: qr[1] },
+    smsSessions: { premium: sms[0], general: sms[1] },
     platformSummary: buildPlatformSummary(pools),
     trace: getKugouUpstreamTrace(),
     warnings,

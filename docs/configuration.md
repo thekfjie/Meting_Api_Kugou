@@ -56,6 +56,10 @@ PM2 的 `KUGOU_UPSTREAM_DEFAULT_PORT` / `KUGOU_UPSTREAM_LITE_PORT` 可以修改�
 
 文件池位于 `cookie/kugou-premium`、`cookie/kugou-general`，管理状态位于 `data/kugou-admin-state.json`。备份 `cookie/` 和 `data/`，不要提交其中内容；容器内由命名卷保存。
 
+同一账号可以分别在两个池发起登录，二维码、短信会话及 Cookie 按池独立保存。普通版和概念版各完成一次登录，不要在两个版本之间复制或迁移 Cookie。刷新、资料查询和播放请求携带各自登录时的设备标识，重启上游后仍沿用已保存的身份。旧版管理状态会自动迁移。
+
+API 日志中的 `event=kugou-auth` 记录登录、刷新和 Cookie 写入过程，含版本、上游状态码，以及账号、Token 和设备字段的 SHA-256 摘要；不记录原始 Token、验证码或二维码 key。排查互相掉线时，对照两个池登录前后的摘要及 `/user/detail` 返回状态，确认是本地 Cookie 被改写还是上游拒绝旧登录态。
+
 管理页写入文件不会覆盖环境变量。要由管理页接管，移除相应环境变量 Cookie 后重新加载进程。自动调度面向文件池；只在环境变量中配置 Cookie 的账号，不会得到与文件池完全相同的自动维护行为。
 
 ## 3. 自动刷新与概念版领取
