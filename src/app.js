@@ -30,7 +30,7 @@ export const createApp = () => {
       c.set('streamAudio', true)
       return apiService(c)
     })
-    for (const page of ['', '/login', '/monitor', '/assets/admin.css', '/assets/admin-client.js']) {
+    for (const page of ['', '/login', '/monitor']) {
       app.get(`${prefix}/${alias}/manage${page}`, adminService)
     }
     for (const action of adminActions) {

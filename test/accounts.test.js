@@ -7,7 +7,7 @@ import { readCookieFile } from '../src/utils/cookie.js'
 import { listKugouAccounts, getSavedKugouAccount } from '../src/utils/kugou-accounts.js'
 import { activateKugouAccount, applyKugouPoolCookieMap, checkKugouPoolSession } from '../src/utils/kugou-admin-actions.js'
 import { createApp } from '../src/app.js'
-import { page } from '../src/views/admin.js'
+import { page } from '../src/service/admin.js'
 import { createMockUpstream, json } from './helpers.js'
 
 let mock
@@ -77,13 +77,10 @@ test('temporary upstream failures do not label the current account as expired', 
   } finally { unavailableUser = '' }
 })
 
-test('management assets support both aliases and new actions require authentication', async () => {
+test('account actions require authentication on both aliases', async () => {
   config.admin.password = 'fixture-password'
   const app = createApp()
   for (const alias of ['api', 'music']) {
-    const css = await app.request(`/${alias}/manage/assets/admin.css`)
-    assert.equal(css.status, 200)
-    assert.match(css.headers.get('content-type'), /text\/css/)
     for (const action of ['accounts/activate', 'kugou/session/check']) {
       const denied = await app.request(`/${alias}/manage/${action}`, { method: 'POST' })
       assert.equal(denied.status, 302)
@@ -95,8 +92,7 @@ test('management assets support both aliases and new actions require authenticat
 test('dashboard escapes account data and lists standby accounts without secrets', async () => {
   const accounts = await listKugouAccounts()
   accounts[0].nickname = '<script>window.leaked=true</script>'
-  const html = page({ basePath: '/music', pools: [], accounts, mon: {}, procs: [], logs: [], qrSessions: {}, smsSessions: {}, warnings: [] })
-  assert.ok(html.includes('所有账号与登录态'))
+  const html = page({ basePath: '/music', pools: [], accounts, mon: {}, procs: [], logs: [], qrSessions: {}, smsSessions: {}, warnings: [], quickProcessNames: [] })
   assert.ok(html.includes('备用'))
   assert.ok(html.includes('&lt;script&gt;window.leaked=true&lt;/script&gt;'))
   assert.equal(html.includes('<script>window.leaked=true</script>'), false)

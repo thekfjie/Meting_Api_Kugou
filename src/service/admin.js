@@ -22,9 +22,11 @@ import {
   getKugouPoolLabel,
   refreshKugouPool
 } from '../utils/kugou-admin-actions.js'
+import { getKugouAccountId, listKugouAccounts } from '../utils/kugou-accounts.js'
 import {
   getKugouAdminPoolState,
   getKugouAdminSession,
+  getKugouAdminStatePath,
   setKugouAdminSession
 } from '../utils/kugou-admin-state.js'
 import { inspectCookieSource, readCookieFile, readCookiePoolFile } from '../utils/cookie.js'
@@ -40,7 +42,7 @@ import {
   getKugouPoolPlatform,
   getKugouPoolUpstreamProcessName,
   getKugouPoolUpstreamUrl,
-  shouldAutoClaimKugouPool,
+  listKugouPoolPlatforms,
   listKugouUpstreamProcessNames
 } from '../utils/kugou-upstream-runtime.js'
 import { getKugouUpstreamTrace } from '../utils/kugou-upstream-status.js'
@@ -48,14 +50,66 @@ import {
   readRequestSummaries
 } from '../utils/request-summary-log.js'
 import kugouMonitorService from './kugou-monitor.js'
-import { page, loginPage, publicPage, adminAsset } from '../views/admin.js'
-import { kugouAuthSummary } from '../utils/kugou-auth-log.js'
-import { getKugouAccountId, getSavedKugouAccount, saveKugouAccount, listKugouAccounts } from '../utils/kugou-accounts.js'
 
 const execFileAsync = promisify(execFile)
 const pm2Bin = process.env.PM2_BIN || (process.platform === 'win32' ? 'pm2.cmd' : 'pm2')
-const normalizePool = pool => pool === 'general' ? 'general' : 'premium'
-const qrLabel = status => ({ 0: '二维码已过期', 1: '等待扫码', 2: '等待确认', 4: '授权成功，可以保存' }[Number(status)] || '状态暂不可用')
+const fmt = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false
+})
+
+const esc = (value = '') => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+
+const txt = (value) => String(value || '').trim()
+const normalizePool = (pool) => (pool === 'general' ? 'general' : 'premium')
+
+const sourceLabel = (value) => {
+  if (value === 'env') return '环境变量'
+  if (value === 'file') return '文件池'
+  return '未配置'
+}
+
+const upstreamLabel = (value) => {
+  if (value === 'hit') return '命中 upstream'
+  if (value === 'fallback-meting') return 'upstream 失败后回退'
+  return '未命中 / 未尝试'
+}
+
+const qrLabel = (value) => ({
+  0: '二维码已过期',
+  1: '等待扫码',
+  2: '已扫码，等待确认',
+  4: '登录成功，可写入池'
+}[Number(value || 0)] || `未知状态 ${value}`)
+
+const platformLabel = (value) => (txt(value).toLowerCase() === 'lite' ? 'lite' : 'default')
+const platformDisplayLabel = (value) => (platformLabel(value) === 'lite' ? 'Lite（概念版）' : 'Default（普通版）')
+
+const time = (value) => {
+  if (!value) return '暂无'
+  try {
+    return `${fmt.format(new Date(value))} (UTC+8)`
+  } catch {
+    return String(value)
+  }
+}
+
+const resultText = (result) => (
+  result
+    ? `${result.ok ? '成功' : '失败'} / ${txt(result.message) || '-'} / ${time(result.at)}`
+    : '暂无'
+)
 
 const root = (base) => `${base}/manage`
 const loginPath = (base) => `${root(base)}/login`
@@ -180,16 +234,14 @@ const poolView = async (pool) => {
 
   const active = parseSimpleCookie(activeCookie)
   const file = parseSimpleCookie(fileCookie)
-  const account = state.account?.userId && active.KugooID && state.account.userId !== active.KugooID ? {} : state.account || {}
+  const account = state.account || {}
   const platform = getKugouPoolPlatform(normalizedPool)
 
   return {
     pool: normalizedPool,
+    accountId: getKugouAccountId(activeCookie, platform),
     label: getKugouPoolLabel(normalizedPool),
     platform,
-    autoClaim: shouldAutoClaimKugouPool(normalizedPool),
-    auth: kugouAuthSummary(activeCookie),
-    accountId: getKugouAccountId(activeCookie, platform),
     processName: getKugouPoolUpstreamProcessName(normalizedPool),
     upstreamUrl: getKugouPoolUpstreamUrl(normalizedPool),
     sourceInfo,
@@ -211,18 +263,561 @@ const poolView = async (pool) => {
   }
 }
 
+const buildPlatformSummary = (pools) => pools.map(item => `${item.label}=${platformDisplayLabel(item.platform)}`).join(' / ')
+const buildConfiguredPlatformSummary = () => listKugouPoolPlatforms().map(item => `${getKugouPoolLabel(item.pool)}=${platformDisplayLabel(item.platform)}`).join(' / ')
+
+const quickReloadLabel = (name) => {
+  if (name === 'meting-api') return '重载 API 环境'
+  if (name === 'kugou-upstream') return '重载默认版 upstream'
+  if (name === 'kugou-upstream-lite') return '重载 Lite upstream'
+  return `重载 ${name}`
+}
+
+const themeScript = '<script>(function(){try{var t=localStorage.getItem("theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.setAttribute("data-theme",t)}catch(e){}})()</script>'
+const toggleScript = '<script>(function(){const btn=document.getElementById("theme-toggle");const icon=document.getElementById("theme-icon");const getTheme=()=>document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");const updateIcon=(t)=>{if(icon)icon.innerHTML=t==="dark"?\'<path d="M12 3a6.364 6.364 0 0 0 9 9 9 9 0 1 1-9-9Z"/>\':\'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>\'};if(btn){updateIcon(getTheme());btn.addEventListener("click",()=>{const n=getTheme()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);localStorage.setItem("theme",n);updateIcon(n)})}})()</script>'
+const darkVars = '--bg: #09090b; --bg-card: #18181b; --text-main: #fafafa; --text-sub: #a1a1aa; --border: #27272a; --primary: #fafafa; --primary-hover: #e4e4e7; --primary-text: #09090b; --danger: #ef4444; --danger-hover: #f87171; --flash-bg: #14532d; --flash-text: #86efac; --flash-border: #166534; --warn-bg: #7f1d1d; --warn-text: #fca5a5; --warn-border: #991b1b; --hint-bg: #27272a; --hint-text: #d4d4d8; --ring: rgba(250, 250, 250, 0.2);'
+
+const commonStyle = `
+:root {
+  --bg: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #0f172a;
+  --text-sub: #64748b;
+  --border: #e2e8f0;
+  --primary: #0f172a;
+  --primary-hover: #334155;
+  --primary-text: #ffffff;
+  --danger: #ef4444;
+  --danger-hover: #b91c1c;
+  --flash-bg: #dcfce7;
+  --flash-text: #166534;
+  --flash-border: #bbf7d0;
+  --warn-bg: #fef2f2;
+  --warn-text: #991b1b;
+  --warn-border: #fecaca;
+  --hint-bg: #f1f5f9;
+  --hint-text: #475569;
+  --ring: rgba(15, 23, 42, 0.15);
+  --radius: 16px;
+  --font: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+:root[data-theme="dark"] { ${darkVars} }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { ${darkVars} } }
+body { margin:0; background:var(--bg); color:var(--text-main); font:14px/1.6 var(--font); transition:background .3s,color .3s; -webkit-font-smoothing:antialiased; overflow-y:scroll; }
+.wrap { max-width:1200px; margin:0 auto; padding:40px 24px; }
+.card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; box-shadow:0 1px 3px rgba(0,0,0,.05); transition:transform .2s,box-shadow .2s; overflow:hidden; }
+.card:hover { box-shadow:0 10px 40px -10px rgba(0,0,0,.08); }
+h1,h2,h3 { margin:0 0 16px; font-weight:600; color:var(--text-main); letter-spacing:-0.02em; }
+h1 { font-size:24px; }
+h2 { font-size:18px; }
+h3 { font-size:15px; margin-top:20px; }
+.sub,.muted { color:var(--text-sub); font-size:13px; }
+.flash,.warn,.hint { padding:12px 16px; border-radius:8px; margin-bottom:16px; font-size:13px; line-height:1.55; border:1px solid transparent; }
+.flash { background:var(--flash-bg); color:var(--flash-text); border-color:var(--flash-border); }
+.warn { background:var(--warn-bg); color:var(--warn-text); border-color:var(--warn-border); }
+.hint { background:var(--hint-bg); color:var(--hint-text); }
+button, .btn { border:none; border-radius:8px; padding:8px 16px; color:var(--primary-text); background:var(--primary); cursor:pointer; font-weight:500; font-size:13px; transition:all .2s; display:inline-flex; align-items:center; justify-content:center; text-decoration:none; box-sizing:border-box; }
+button:hover, .btn:hover { background:var(--primary-hover); transform:translateY(-1px); }
+button:active, .btn:active { transform:translateY(0); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline:none; box-shadow:0 0 0 3px var(--ring); }
+button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+.ghost { background:transparent; color:var(--text-main); border:1px solid var(--border); }
+.ghost:hover { background:var(--hint-bg); color:var(--text-main); }
+.danger { background:var(--danger); color:#fff; }
+.danger:hover { background:var(--danger-hover); }
+.theme-btn { border-radius:50%; padding:8px; width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center; }
+input, select { width:100%; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-main); box-sizing:border-box; font-family:inherit; font-size:14px; transition:border-color .2s,box-shadow .2s; }
+input:focus, select:focus { outline:none; border-color:var(--primary); }
+label { display:block; font-size:13px; font-weight:500; color:var(--text-main); margin:12px 0 6px; }
+label:first-child { margin-top:0; }
+code, pre { font-family:"JetBrains Mono", Consolas, monospace; font-size:13px; }
+code { background:var(--hint-bg); padding:3px 6px; border-radius:4px; color:var(--text-main); word-break:break-all; }
+pre { white-space:pre-wrap; word-break:break-word; background:var(--bg); padding:16px; border-radius:8px; border:1px solid var(--border); overflow-x:auto; color:var(--text-sub); }
+.table-wrap { overflow-x:auto; margin-top:8px; }
+`
+
+const pageStyle = commonStyle + `
+.top { display:flex; justify-content:space-between; align-items:center; margin-bottom:32px; gap:16px; }
+.top-title { display:flex; flex-direction:column; gap:4px; }
+.top-actions { display:flex; gap:12px; align-items:center; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(380px,1fr)); gap:24px; }
+.full { grid-column:1/-1; }
+table { width:100%; border-collapse:collapse; font-size:13px; min-width:600px; }
+th,td { padding:12px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:middle; white-space:nowrap; }
+th { color:var(--text-sub); font-weight:500; font-size:12px; }
+tr:last-child td { border-bottom:none; }
+form { margin:0; }
+.actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
+.mini { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+.subcard { padding:16px; border-radius:12px; background:var(--bg); border:1px solid var(--border); }
+.subcard strong { display:block; margin-bottom:8px; font-size:14px; color:var(--text-main); font-weight:600; }
+.subcard div { color:var(--text-sub); font-size:13px; margin-bottom:4px; }
+.qr { max-width:200px; border:1px solid var(--border); border-radius:12px; background:#fff; padding:12px; display:block; }
+.split-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.split-actions form { display:flex; }
+.split-actions button { width:100%; }
+details { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-top:16px; }
+summary { cursor:pointer; font-weight:500; color:var(--text-main); user-select:none; }
+.form-row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+.form-row > * { flex:1; min-width:160px; }
+/* Keep the original controls; contain long tables and optional details. */
+.wrap { max-width:1440px; padding:24px; }
+.top { margin-bottom:20px; }
+.top h1 { margin-bottom:0; }
+.grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.card { padding:20px; min-width:0; border-radius:12px; }
+.card h2 { margin-bottom:12px; }
+.hint { margin-bottom:12px; }
+.actions { gap:8px; margin-top:12px; }
+table { min-width:0; font-size:14px; }
+th { font-size:13px; }
+th,td { padding:10px 8px; }
+.wide-table table { min-width:1000px; }
+.wrap-cell { white-space:normal; min-width:150px; max-width:360px; overflow-wrap:anywhere; }
+.request-logs .table-wrap { max-height:320px; overflow:auto; }
+.request-logs table { min-width:900px; }
+.request-logs th { position:sticky; top:0; background:var(--bg-card); }
+.request-logs td:last-child { max-width:400px; white-space:normal; overflow-wrap:anywhere; }
+.optional-section { margin:0; background:transparent; border:0; padding:0; }
+.optional-section > summary { font-size:18px; font-weight:600; }
+.optional-section[open] > summary { margin-bottom:16px; }
+.section-details > .mini { margin-top:12px; }
+.subcard { min-width:0; overflow-wrap:anywhere; }
+.card .subcard div { font-size:14px; }
+@media (min-width:769px) { .compact-card { grid-column:auto; } }
+@media (max-width: 768px) {
+  .wrap { padding:20px 16px; }
+  .grid { grid-template-columns:1fr; gap:16px; }
+  .top { flex-direction:column; align-items:flex-start; }
+  .top-actions { width:100%; justify-content:space-between; }
+  .card { padding:16px; border-radius:12px; box-sizing:border-box; }
+  .actions { flex-direction:column; align-items:stretch; gap:12px; }
+  .actions form { width:100%; display:flex; }
+  .actions form button { width:100%; flex:1; justify-content:center; }
+  .split-actions { grid-template-columns:1fr; }
+  .form-row { flex-direction:column; align-items:stretch; }
+  .form-row > * { width:100%; box-sizing:border-box; }
+  .mini { grid-template-columns:1fr; gap:12px; }
+  .qr { width:200px; max-width:100%; box-sizing:border-box; margin:12px auto; }
+}
+`
+
+const loginStyle = commonStyle + `
+body { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.card { width:min(400px, 90vw); padding:32px; box-sizing:border-box; }
+input { margin:12px 0 24px; }
+button { width:100%; padding:12px 16px; font-weight:600; }
+.msg { padding:12px 16px; border-radius:8px; background:var(--warn-bg); color:var(--warn-text); margin-bottom:16px; border:1px solid var(--warn-border); font-size:13px; }
+p { margin:16px 0 0; font-size:13px; color:var(--text-sub); }
+`
+
+const publicStyle = commonStyle + `
+.header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; gap:16px; flex-wrap:wrap; }
+.top-actions { display:flex; gap:12px; align-items:center; }
+@media (max-width: 768px) {
+  .wrap { padding:24px 16px; }
+  .header-row { flex-direction:column; align-items:stretch; }
+  .top-actions { width:100%; justify-content:space-between; }
+  .card { padding:16px; border-radius:12px; }
+}
+`
+
+const renderMonitorRefreshSection = (basePath, mon) => `
+<section class="card full compact-card">
+  <h2>探针控制</h2>
+  <div class="hint">
+    当前 VIP 探针缓存剩余：${esc(String(mon?.cacheRemainingSeconds ?? 0))} 秒
+    <br>预计下次重新探测：${esc(time(mon?.nextCheckAt))}
+  </div>
+  <div class="actions">
+    <form method="post" action="${root(basePath)}/kugou/status/refresh">
+      <button type="submit">强制刷新 VIP 探针</button>
+    </form>
+  </div>
+</section>`
+
+const renderRequestLogsSection = (logs) => `
+<section class="card full request-logs">
+  <h2>最近请求摘要</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>入口</th>
+          <th>请求</th>
+          <th>链路</th>
+          <th>结果摘要</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${logs.length
+          ? logs.map(item => `<tr><td>${esc(time(item.at))}</td><td>${esc(item.path || '-')}</td><td>${esc([item.server, item.type, item.id].filter(Boolean).join(' / ') || '-')}</td><td>${esc([item.pool || '-', item.cache || '-', item.upstream || '-'].join(' / '))}</td><td>${esc((item.items || []).join(' | ') || '-')}</td></tr>`).join('')
+          : '<tr><td colspan="5">暂无请求摘要</td></tr>'}
+      </tbody>
+    </table>
+  </div>
+</section>`
+
+export const page = ({
+  flash,
+  basePath,
+  procs,
+  pools,
+  accounts = [],
+  mon,
+  qrSessions,
+  smsSessions,
+  platformSummary,
+  trace,
+  warnings,
+  logs,
+  quickProcessNames
+}) => {
+  const litePools = pools.filter(item => item.platform === 'lite')
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meting Kugou 管理页</title>
+  <style>${pageStyle}</style>
+  ${themeScript}
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="top-title">
+        <h1>Meting Kugou 管理页</h1>
+      </div>
+      <div class="top-actions">
+        <button id="theme-toggle" class="ghost theme-btn" aria-label="切换主题">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="theme-icon"></svg>
+        </button>
+        <form method="post" action="${root(basePath)}/logout">
+          <button class="ghost" type="submit">退出登录</button>
+        </form>
+      </div>
+    </div>
+    ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
+    ${warnings.map(item => `<div class="warn">${esc(item)}</div>`).join('')}
+    <div class="grid">
+      <section class="card">
+        <details class="optional-section"><summary>运行状态</summary>
+        <details class="section-details"><summary>上游链路</summary><div class="hint">
+          当前池平台：<strong>${esc(platformSummary)}</strong>
+          <br>最近 upstream：<strong>${esc(upstreamLabel(trace?.status))}</strong>
+          <br>最近记录时间：${esc(time(trace?.at))}
+          <br>最近类型 / 池：${esc(trace?.type || '-')} / ${esc(trace?.pool || '-')}
+        </div></details>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>进程</th>
+                <th>状态</th>
+                <th>内存</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${procs.length
+                ? procs.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.pm2_env?.status || '-')}</td><td>${Math.round((item.monit?.memory || 0) / 1024 / 1024)} MB</td><td><form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="${esc(item.name)}"><input type="hidden" name="action" value="restart"><button type="submit">重启</button></form></td></tr>`).join('')
+                : '<tr><td colspan="4">未读取到 PM2 进程信息，请确认服务器上的 <code>pm2</code> 可用。</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div class="actions">
+          ${quickProcessNames.map(name => `<form method="post" action="${root(basePath)}/pm2"><input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="action" value="restart-update"><button class="ghost" type="submit">${esc(quickReloadLabel(name))}</button></form>`).join('')}
+        </div>
+        </details>
+      </section>
+      <section class="card">
+        <details class="optional-section"><summary>平台与 Cookie 来源</summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>池</th>
+                <th>平台</th>
+                <th>实际来源</th>
+                <th>进程</th>
+                <th>文件路径</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(sourceLabel(item.sourceInfo.source))}</td><td>${esc(item.processName || '-')}</td><td><code>${esc(item.filePath || '-')}</code></td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        ${pools.flatMap(item => item.warnings.map(message => `<div class="warn" style="margin-top:16px">${esc(item.label)}：${esc(message)}</div>`)).join('')}
+        </details>
+      </section>
+      <section class="card full">
+        <h2>账号信息</h2>
+        <div class="table-wrap wide-table">
+          <table>
+            <thead>
+              <tr>
+                <th>账号池</th>
+                <th>平台</th>
+                <th>用户 ID</th>
+                <th>昵称</th>
+                <th>VIP 类型</th>
+                <th>到期时间</th>
+                <th>下次自动刷新</th>
+                <th>下次自动领取</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(item.userId || '-')}</td><td>${esc(item.nickname || '-')}</td><td>${esc(item.vipType || '-')}</td><td>${esc(item.expireTime || '-')}</td><td>${esc(time(item.state?.nextRefreshAt))}</td><td>${esc(time(item.state?.nextClaimAt))}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <details class="section-details"><summary>会话详情</summary><div class="mini">
+          ${pools.map(item => `<div class="subcard"><strong>${esc(item.label)}</strong><div>Token：${esc(item.token || '-')}</div><div>DFID：${esc(item.dfid || '-')}</div><div>MID：${esc(item.mid || '-')}</div><div>上游：<code>${esc(item.upstreamUrl || '-')}</code></div><div>最近资料同步：${esc(time(item.state?.lastProfileAt))}</div></div>`).join('')}
+        </div></details>
+        ${accounts.filter(account => !pools.some(pool => pool.accountId === account.id)).length ? `<details><summary>备用账号</summary><div class="table-wrap"><table><thead><tr><th>平台</th><th>用户 ID</th><th>昵称</th><th>操作</th></tr></thead><tbody>${accounts.filter(account => !pools.some(pool => pool.accountId === account.id)).map(account => `<tr><td>${esc(platformDisplayLabel(account.platform))}</td><td>${esc(account.userId)}</td><td>${esc(account.nickname || '-')}</td><td>${pools.filter(pool => pool.platform === account.platform).map(pool => `<form method="post" action="${root(basePath)}/accounts/activate"><input type="hidden" name="pool" value="${esc(pool.pool)}"><input type="hidden" name="id" value="${esc(account.id)}"><button class="ghost" type="submit">启用到${esc(pool.label)}</button></form>`).join('')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+      </section>
+      <section class="card">
+        <h2>二维码 / 短信登录</h2>
+        <h3>二维码登录</h3>
+        <div class="split-actions">
+          <form method="post" action="${root(basePath)}/kugou/qr/start">
+            <input type="hidden" name="pool" value="premium">
+            <button type="submit">为专业池生成二维码</button>
+          </form>
+          <form method="post" action="${root(basePath)}/kugou/qr/start">
+            <input type="hidden" name="pool" value="general">
+            <button class="ghost" type="submit">为普通池生成二维码</button>
+          </form>
+        </div>
+        ${pools.map(item => {
+          const qr = qrSessions[item.pool]
+          return qr
+            ? `<div style="margin-top:16px"><div class="hint"><strong>${esc(item.label)} · ${esc(platformDisplayLabel(item.platform))}</strong><br>状态：${esc(qrLabel(qr.status))}<br>过期时间：${esc(time(qr.expiresAt))}</div>${qr.base64 ? `<img class="qr" src="${esc(qr.base64)}" alt="qr">` : ''}<div class="actions"><form method="post" action="${root(basePath)}/kugou/qr/check"><input type="hidden" name="pool" value="${esc(item.pool)}"><button class="ghost" type="submit">检查${esc(item.label)}二维码</button></form><form method="post" action="${root(basePath)}/kugou/qr/apply"><input type="hidden" name="pool" value="${esc(item.pool)}"><button type="submit">写入${esc(item.label)}</button></form></div></div>`
+            : ''
+        }).join('')}
+        <details${Object.values(smsSessions).some(Boolean) ? ' open' : ''}><summary>短信验证登录</summary>
+        <form method="post" action="${root(basePath)}/kugou/captcha/send">
+          <label>手机号</label>
+          <input name="mobile" placeholder="请输入手机号">
+          <label>目标账号池</label>
+          <select name="pool">
+            <option value="premium">专业池</option>
+            <option value="general">普通池</option>
+          </select>
+          <button class="ghost" type="submit" style="margin-top:12px">发送验证码</button>
+        </form>
+        ${pools.filter(item => smsSessions[item.pool]).map(item => `<form method="post" action="${root(basePath)}/kugou/captcha/login" style="margin-top:16px">
+          <input type="hidden" name="pool" value="${esc(item.pool)}">
+          <div class="hint">当前短信会话：<strong>${esc(item.label)} · ${esc(platformDisplayLabel(item.platform))}</strong></div>
+          <label>短信验证码</label>
+          <input name="code" placeholder="输入 6 位验证码">
+          <button type="submit" style="margin-top:12px">登录并写入${esc(item.label)}</button>
+        </form>`).join('')}
+        </details>
+      </section>
+      <section class="card">
+        <h2>登录态刷新</h2>
+        <div class="actions">
+          <form method="post" action="${root(basePath)}/kugou/refresh">
+            <input type="hidden" name="pool" value="premium">
+            <button type="submit">刷新专业池</button>
+          </form>
+          <form method="post" action="${root(basePath)}/kugou/refresh">
+            <input type="hidden" name="pool" value="general">
+            <button class="ghost" type="submit">刷新普通池</button>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>池分区</th>
+                <th>上次刷新</th>
+                <th>刷新结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(time(item.state?.lastRefreshAt))}</td><td class="wrap-cell">${esc(resultText(item.state?.lastRefreshResult))}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="card full compact-card">
+        <h2>Lite 会员领取</h2>
+        <div class="actions">
+          ${pools.map(item => `<form method="post" action="${root(basePath)}/kugou/vip/claim"><input type="hidden" name="pool" value="${esc(item.pool)}"><button type="submit"${item.platform === 'lite' ? '' : ' disabled'} class="${item.pool === 'general' ? 'ghost' : ''}">领取${esc(item.label)} Lite 会员</button></form>`).join('')}
+          <form method="post" action="${root(basePath)}/kugou/vip/claim-all">
+            <button class="danger" type="submit"${litePools.length ? '' : ' disabled'}>批量执行</button>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>池分区</th>
+                <th>平台</th>
+                <th>上次领取</th>
+                <th>领取结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(time(item.state?.lastClaimAt))}</td><td class="wrap-cell">${esc(resultText(item.state?.lastClaimResult))}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="card">
+        <details class="optional-section"><summary>池文件操作</summary>
+        <div class="hint">以下操作仅影响本地文件池配置，不会覆盖环境变量等更高优先级配置。</div>
+        <div class="actions">
+          <form method="post" action="${root(basePath)}/pool/clear">
+            <input type="hidden" name="pool" value="premium">
+            <button class="danger" type="submit">清空专业池文件</button>
+          </form>
+          <form method="post" action="${root(basePath)}/pool/clear">
+            <input type="hidden" name="pool" value="general">
+            <button class="danger" type="submit">清空普通池文件</button>
+          </form>
+        </div>
+        <form method="post" action="${root(basePath)}/pool/copy" style="margin-top:24px">
+          <label>复制配置</label>
+          <div class="form-row">
+            <select name="fromPool">
+              <option value="premium">从专业池</option>
+              <option value="general">从普通池</option>
+            </select>
+            <select name="toPool">
+              <option value="general">到普通池</option>
+              <option value="premium">到专业池</option>
+            </select>
+            <button type="submit">执行复制</button>
+          </div>
+        </form>
+        <form method="post" action="${root(basePath)}/pool/move" style="margin-top:24px">
+          <label>迁移配置</label>
+          <div class="form-row">
+            <select name="fromPool">
+              <option value="premium">从专业池</option>
+              <option value="general">从普通池</option>
+            </select>
+            <select name="toPool">
+              <option value="general">到普通池</option>
+              <option value="premium">到专业池</option>
+            </select>
+            <button class="ghost" type="submit">执行迁移</button>
+          </div>
+        </form>
+        </details>
+      </section>
+      <section class="card">
+        <details class="optional-section"><summary>监控状态</summary>
+        <div class="hint">
+          最新探测：${esc(time(mon?.checkedAt))}
+          <br>缓存有效期：${esc(String(mon?.ttlSeconds || 0))} 秒
+          <br>分钟剩余额度：${esc(String(mon?.summary?.remainingMinute ?? 0))}
+        </div>
+        <div class="mini" style="margin-top:16px">
+          ${[{ key: 'pro', title: '专业池探针' }, { key: 'normal', title: '普通池探针' }, { key: 'internal', title: '游客池探针' }].map(({ key, title }) => {
+            const detail = mon?.pools?.[key] || {}
+            const diagnostics = detail.diagnostics || {}
+            return `<div class="subcard"><strong>${esc(title)}</strong><div>状态：${esc(detail.label || '-')}</div><div>说明：${esc(detail.detail || '-')}</div><div>基础探活：${esc(diagnostics.basicProbe || '-')}</div><div>VIP 探针：${esc(diagnostics.vipState || '-')}</div><div>最后请求：${esc(time(detail.lastRequestAt))}</div></div>`
+          }).join('')}
+        </div>
+        </details>
+      </section>
+      ${renderMonitorRefreshSection(basePath, mon)}
+      ${renderRequestLogsSection(logs)}
+      <section class="card full">
+        <h2>调试信息</h2>
+        <details>
+          <summary>展开查看运行时状态数据</summary>
+          <div class="mini" style="margin-top:16px">
+            <div><h3>上游链路</h3><pre>${esc(JSON.stringify(trace || null, null, 2))}</pre></div>
+            <div><h3>账号池状态</h3><pre>${esc(JSON.stringify(pools, null, 2))}</pre></div>
+            <div><h3>监控快照</h3><pre>${esc(JSON.stringify(mon, null, 2))}</pre></div>
+            <div><h3>状态文件</h3><pre>${esc(getKugouAdminStatePath())}</pre></div>
+          </div>
+        </details>
+      </section>
+    </div>
+  </div>
+  ${toggleScript}
+</body>
+</html>`
+}
+
+const loginPage = ({ message = '', basePath = '/music' }) => `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>系统登录 - Meting</title>
+  <style>${loginStyle}</style>
+  ${themeScript}
+</head>
+<body style="position:relative">
+  <div style="position:absolute; top:24px; right:24px;">
+    <button id="theme-toggle" class="ghost theme-btn" aria-label="切换主题">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="theme-icon"></svg>
+    </button>
+  </div>
+  <form class="card" method="post" action="${loginPath(basePath)}">
+    <h1>系统访问验证</h1>
+    <p style="margin-bottom:24px;">验证管理员密码后进入管理页。</p>
+    ${message ? `<div class="msg">${esc(message)}</div>` : ''}
+    <label>安全密码</label>
+    <input type="password" name="password" placeholder="请输入密码">
+    <button type="submit">登录系统</button>
+    <p>公开监控页：<a href="${esc(`${basePath}/manage/monitor`)}" style="color:var(--primary);text-decoration:none;font-weight:500;">/manage/monitor</a></p>
+  </form>
+  ${toggleScript}
+</body>
+</html>`
+
+const publicPage = ({ basePath, mon, platformSummary, trace }) => `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meting 公共状态展示</title>
+  <style>${publicStyle}</style>
+  ${themeScript}
+</head>
+<body>
+  <div class="wrap">
+    <div class="header-row">
+      <div>
+        <h1>网络与服务状态矩阵</h1>
+        <div class="hint" style="margin:0;">
+          当前池平台：<strong>${esc(platformSummary)}</strong>
+          <br>上游链路：<strong>${esc(upstreamLabel(trace?.status))}</strong>
+          <br>最后更新：${esc(time(trace?.at))}
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="theme-toggle" class="ghost theme-btn" aria-label="切换主题">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="theme-icon"></svg>
+        </button>
+        <a class="btn" href="${loginPath(basePath)}">进入管理控制台</a>
+      </div>
+    </div>
+    <div class="card">
+      <pre>${esc(JSON.stringify(mon, null, 2))}</pre>
+    </div>
+  </div>
+  ${toggleScript}
+</body>
+</html>`
+
 export default async (c) => {
   const basePath = getBasePath(c)
-  const asset = adminAsset(c.req.path.split('/assets/')[1])
-  if (asset && c.req.method === 'GET') {
-    c.header('Content-Type', asset[0])
-    c.header('Cache-Control', 'public, max-age=300')
-    return c.body(asset[1])
-  }
   c.header('Cache-Control', 'no-store')
 
   if (c.req.method === 'GET' && c.req.path.endsWith('/login')) {
-    if (requireAdminAuth(c)) return redirect(c, root(basePath))
     return c.html(loginPage({ message: consumeFlash(c), basePath }))
   }
 
@@ -241,8 +836,18 @@ export default async (c) => {
     return redirect(c, loginPath(basePath))
   }
 
-  if (c.req.method === 'GET' && c.req.path.endsWith('/manage/monitor') && !requireAdminAuth(c)) {
-    return c.html(publicPage({ basePath, mon: await monitor() }))
+  if (c.req.method === 'GET' && c.req.path.endsWith('/manage/login') && requireAdminAuth(c)) {
+    return redirect(c, root(basePath))
+  }
+
+  if (c.req.method === 'GET' && (c.req.path.endsWith('/manage') || c.req.path.endsWith('/manage/monitor')) && !requireAdminAuth(c)) {
+    const mon = await monitor()
+    return c.html(publicPage({
+      basePath,
+      mon,
+      platformSummary: buildConfiguredPlatformSummary(),
+      trace: getKugouUpstreamTrace()
+    }))
   }
 
   const denied = needAuth(c, basePath)
@@ -261,7 +866,7 @@ export default async (c) => {
       results.push(await checkKugouPoolSession(pool))
     }
     const ok = results.every(result => result.ok)
-    return respond(c, basePath, { ok, results, message: ok ? '登录校验通过' : '校验已完成，请查看各池状态' }, ok ? '登录校验通过' : '部分登录态需要检查')
+    return respond(c, basePath, { ok, results }, ok ? '登录校验通过' : '校验已完成')
   }
 
   if (c.req.method === 'POST' && c.req.path.endsWith('/pm2')) {
@@ -430,12 +1035,6 @@ export default async (c) => {
   ])
 
   const pools = [premium, general]
-  for (const item of pools) {
-    if (item.accountId && !(await getSavedKugouAccount(item.accountId))) {
-      await saveKugouAccount(await readCookieFile('kugou', item.pool), item.platform, item.state.account, item.state.sessionStatus)
-    }
-  }
-  const accounts = await listKugouAccounts()
   const warnings = []
   if (!hasKugouUpstreamAuth()) {
     warnings.push('当前没有配置 Kugou upstream URL；请至少配置默认版或 Lite 版 upstream，管理动作和 Lite 领取才会生效。')
@@ -452,10 +1051,11 @@ export default async (c) => {
     basePath,
     procs,
     pools,
+    accounts: await listKugouAccounts(),
     mon,
     qrSessions: { premium: qr[0], general: qr[1] },
     smsSessions: { premium: sms[0], general: sms[1] },
-    accounts,
+    platformSummary: buildPlatformSummary(pools),
     trace: getKugouUpstreamTrace(),
     warnings,
     logs,
