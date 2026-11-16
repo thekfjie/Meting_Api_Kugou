@@ -26,7 +26,7 @@ before(async () => {
     if (path === '/user/detail') return json(res, { status: 1, data: { userid: parseSimpleCookie(req.headers.cookie).userid, nickname: 'Fixture' } })
     if (path === '/login/device') return json(res, { status: 1 })
     if (path === '/user/vip/detail') return json(res, { status: 1, data: { vip_end_time: '2025-01-01 00:00:00', su_vip_end_time: '2025-02-01 00:00:00', busi_vip: [membership(settings.extended ? '2030-02-01 00:00:00' : '2030-01-01 00:00:00'), { ...membership('2030-03-01 00:00:00'), product_type: 'tvip' }] } })
-    if (path === '/youth/listen/song') return json(res, { status: settings.listenOk ? 1 : 0 })
+    if (path === '/youth/listen/song') return json(res, { status: settings.listenOk ? 1 : 0, error_code: settings.listenOk ? 0 : 130012 }, settings.listenOk ? 200 : 502)
     if (path === '/youth/vip') {
       if (settings.disconnect) return res.destroy()
       if (settings.claimOk && settings.extend) settings.extended = true
@@ -71,11 +71,12 @@ test('restored flow only calls listen and the original reward endpoint, and veri
   assert.equal(JSON.stringify(result.evidence).includes('private'), false)
 })
 
-test('existing VIP cannot mask a failed listen or reward claim', async () => {
+test('a listen rejection cannot block the legacy reward, while existing VIP cannot mask a failed reward', async () => {
   settings.listenOk = false
   let result = await claimKugouLiteVipReward(cookie, 'general')
-  assert.equal(result.ok, false)
-  assert.equal(writes().length, 1)
+  assert.equal(result.ok, true)
+  assert.equal(result.evidence.steps.listen.code, 130012)
+  assert.equal(writes().length, 2)
   settings.listenOk = true
   settings.claimOk = false
   requests = []

@@ -35,8 +35,9 @@ export const claimKugouLiteVipReward = async (initialCookie, pool, { previousRes
     }
     return finish(evidence.claim.state === 'confirmed' ? '会员权益已更新' : '上次领取尚待核验，未重复提交')
   }
-  const listen = await call('listen', performKugouLiteVipListen)
-  if (!listen.ok) { evidence.claim.state = 'failed'; return finish('听歌任务未完成，未执行领取') }
+  // Preserve the legacy behavior: a listener rejection (130012 in production)
+  // does not determine eligibility for the independent ad-time reward.
+  await call('listen', performKugouLiteVipListen)
   const claim = await call('claim', performKugouLiteVipClaim)
   evidence.claim = { state: claim.ok ? 'accepted' : claim.status ? 'failed' : 'uncertain', before: memberships }
   const reward = claim.body?.data
