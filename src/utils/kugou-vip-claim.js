@@ -58,17 +58,18 @@ export const claimAndUpgradeKugouLiteVip = async (initialCookie, pool, { previou
   if (!upgradeBaseline.ok) return finish('今日已领取，暂时无法核验升级前权益；未执行升级')
   vipBody = upgradeBaseline.body
   const previous = previousResult?.evidence?.day === day ? previousResult.evidence.upgrade : null
-  const attempted = previous && ['confirmed', 'accepted', 'uncertain'].includes(previous.state)
+  const attempted = previous && ['confirmed', 'accepted', 'uncertain', 'failed'].includes(previous.state)
   const baseline = attempted ? previous.before : summarizeKugouMemberships(upgradeBaseline.body.data, now)
   evidence.upgrade = { state: previous?.state === 'confirmed' ? 'confirmed' : 'skipped', before: baseline || [] }
   let upgrade
   if (attempted) {
-    evidence.upgrade.state = previous.state
-    evidence.upgrade.reused = true
+    evidence.upgrade = { ...previous, code: previous.code ?? previousResult.evidence.steps?.upgrade?.code, before: baseline || [], reused: true }
+    if (previousResult.evidence.steps?.upgrade) evidence.steps.upgrade = { ...previousResult.evidence.steps.upgrade, reused: true }
   } else {
     if (getKugouVipDay() !== day) return finish('今日已领取，日期已变化；未执行升级')
     upgrade = await call('upgrade', performKugouLiteVipUpgrade)
     evidence.upgrade.state = upgrade.ok ? 'accepted' : upgrade.status ? 'failed' : 'uncertain'
+    evidence.upgrade.code = evidence.steps.upgrade.code
   }
   // At most two readbacks; never repeat a reward write on a timeout.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -86,5 +87,6 @@ export const claimAndUpgradeKugouLiteVip = async (initialCookie, pool, { previou
     if (evidence.upgrade.state === 'confirmed' || evidence.upgrade.state === 'failed') break
   }
   const prefix = evidence.claim.alreadyReceived ? '今日已领取' : '今日领取已确认'
-  return finish(`${prefix}；${evidence.upgrade.state === 'confirmed' ? '升级后权益已更新' : evidence.upgrade.state === 'accepted' ? '升级请求已接受，权益待确认' : evidence.upgrade.state === 'uncertain' ? '升级响应未确认，未重复提交' : '升级未成功'}`)
+  const failure = Number(evidence.upgrade.code) === 297000 ? '上游无法升级奖励（297000）' : '升级未成功'
+  return finish(`${prefix}；${evidence.upgrade.state === 'confirmed' ? '升级后权益已更新' : evidence.upgrade.state === 'accepted' ? '升级请求已接受，权益待确认' : evidence.upgrade.state === 'uncertain' ? '升级响应未确认，未重复提交' : failure}`)
 }

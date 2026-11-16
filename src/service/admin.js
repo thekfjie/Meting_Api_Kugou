@@ -25,6 +25,7 @@ import {
 } from '../utils/kugou-admin-actions.js'
 import { getKugouAccountId, getSavedKugouAccount, saveKugouAccount, listKugouAccounts } from '../utils/kugou-accounts.js'
 import { getKugouDispatchSnapshot, saveKugouDispatchPolicy, setKugouAccountLimit, setKugouAccountEnabled } from '../utils/kugou-dispatch.js'
+import { getKugouVipDay } from '../utils/kugou-membership.js'
 import {
   getKugouAdminPoolState,
   getKugouAdminSession,
@@ -492,6 +493,11 @@ const renderClaimResult = result => {
   return `${esc(result.message)}<details><summary>核验记录</summary><div>${esc(evidence.day)}</div>${changes.map(item => `<div>${esc(item.name)}：${esc(item.before || '无')} → ${esc(item.after)}</div>`).join('')}<pre>${esc(steps)}</pre></details>`
 }
 
+const claimActionLabel = result => {
+  const attempted = result?.evidence?.day === getKugouVipDay() && ['accepted', 'uncertain', 'confirmed', 'failed'].includes(result.evidence.upgrade?.state)
+  return attempted ? '重新核验' : '领取并升级'
+}
+
 export const page = ({
   flash,
   basePath,
@@ -707,7 +713,7 @@ export const page = ({
           <table>
             <thead><tr><th>概念版账号</th><th>上次执行</th><th>结果</th><th>操作</th></tr></thead>
             <tbody>
-              ${accountRows.filter(item => item.platform === 'lite').map(item => `<tr><td>${esc(item.nickname || item.userId)}<br>${esc(item.userId)}</td><td>${esc(time(item.state.lastClaimAt))}</td><td class="wrap-cell">${renderClaimResult(item.state.lastClaimResult)}</td><td><form method="post" action="${root(basePath)}/accounts/action"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="action" value="claim"><button class="ghost" type="submit">领取并升级</button></form></td></tr>`).join('') || '<tr><td colspan="4">暂无概念版账号</td></tr>'}
+              ${accountRows.filter(item => item.platform === 'lite').map(item => `<tr><td>${esc(item.nickname || item.userId)}<br>${esc(item.userId)}</td><td>${esc(time(item.state.lastClaimAt))}</td><td class="wrap-cell">${renderClaimResult(item.state.lastClaimResult)}</td><td><form method="post" action="${root(basePath)}/accounts/action"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="action" value="claim"><button class="ghost" type="submit">${claimActionLabel(item.state.lastClaimResult)}</button></form></td></tr>`).join('') || '<tr><td colspan="4">暂无概念版账号</td></tr>'}
             </tbody>
           </table>
         </div>

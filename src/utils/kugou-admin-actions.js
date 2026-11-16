@@ -156,9 +156,9 @@ const persistPoolCookie = async ({ pool, activeCookie = '', cookieMap = {}, prof
   return nextCookie
 }
 
-const buildClaimSchedulePatch = pool => (
+const buildClaimSchedulePatch = (pool, options = {}) => (
   shouldAutoClaimKugouPool(pool)
-    ? { nextClaimAt: buildNextClaimAt() }
+    ? { nextClaimAt: buildNextClaimAt(options) }
     : { nextClaimAt: '' }
 )
 
@@ -450,7 +450,7 @@ export const runKugouAccountAction = async (id, action) => {
       const name = action === 'refresh' ? 'Refresh' : 'Claim'
       patch[`last${name}At`] = at
       patch[`last${name}Result`] = { ok, message, at, ...(evidence ? { evidence } : {}) }
-      patch[`next${name}At`] = action === 'refresh' ? buildNextRefreshAt({ retry: !ok }) : buildNextClaimAt()
+      patch[`next${name}At`] = action === 'refresh' ? buildNextRefreshAt({ retry: !ok }) : buildNextClaimAt({ tomorrow: ['confirmed', 'accepted', 'uncertain'].includes(evidence?.claim?.state) })
       await updateKugouAdminState(state => { state.accounts[id].maintenance = { ...state.accounts[id].maintenance, ...patch } })
       if (getKugouAccountId(await readCookieFile('kugou', pool), account.platform) === id) await setKugouAdminPoolState(pool, patch)
     }
@@ -686,7 +686,7 @@ export const claimKugouLiteVip = (pool, { trigger = 'manual' } = {}) => withPool
     }
     const patch = {
       lastClaimAt: at,
-      ...buildClaimSchedulePatch(normalizedPool),
+      ...buildClaimSchedulePatch(normalizedPool, { tomorrow: ['confirmed', 'accepted', 'uncertain'].includes(evidence.claim.state) }),
       lastClaimResult: result,
       lastError: ok
         ? null

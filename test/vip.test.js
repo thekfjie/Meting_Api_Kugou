@@ -12,6 +12,7 @@ import { saveKugouAccount, getSavedKugouAccount, listKugouAccounts } from '../sr
 import { updateKugouAdminState } from '../src/utils/kugou-admin-state.js'
 import { page } from '../src/service/admin.js'
 import { runKugouAutoRefreshTick } from '../src/utils/kugou-auto-refresh.js'
+import { buildNextClaimAt } from '../src/utils/kugou-auto-schedule.js'
 
 const cookie = 'KugooID=10001; t=private-token; KUGOU_API_PLATFORM=lite; KUGOU_API_GUID=private-device'
 const membership = expires => ({ busi_type: 'concept', product_type: 'svip', is_vip: 1, vip_end_time: expires, vip_token: 'private-vip-token' })
@@ -34,7 +35,7 @@ before(async () => {
     if (path === '/youth/day/vip/upgrade') {
       if (settings.upgradeOk && settings.extend) settings.extended = true
       if (settings.disconnect) return res.destroy()
-      return json(res, { status: settings.upgradeOk ? 1 : 0, error_code: settings.upgradeOk ? 0 : 123 })
+      return json(res, { status: settings.upgradeOk ? 1 : 0, error_code: settings.upgradeOk ? 0 : 297000 })
     }
     json(res, { status: 0 }, 404)
   })
@@ -136,6 +137,27 @@ test('an upgrade timeout is uncertain and never repeats its reward write that da
   requests = []
   await claimAndUpgradeKugouLiteVip(cookie, 'general', { previousResult: first })
   assert.equal(writes().length, 0)
+})
+
+test('an upstream reward refusal is shown truthfully and same-day rechecks cannot repeat the upgrade', async () => {
+  settings.claimed = true
+  settings.upgradeOk = false
+  const first = await claimAndUpgradeKugouLiteVip(cookie, 'general')
+  assert.equal(first.ok, false)
+  assert.match(first.message, /297000/)
+  requests = []
+  const recheck = await claimAndUpgradeKugouLiteVip(cookie, 'general', { previousResult: first })
+  assert.equal(recheck.evidence.upgrade.state, 'failed')
+  assert.match(recheck.message, /297000/)
+  assert.equal(writes().length, 0)
+})
+
+test('daily schedules use UTC+8, always stay in the future, and completed days move to tomorrow', t => {
+  t.mock.method(Math, 'random', () => 0)
+  const now = Date.parse('2026-11-16T14:00:00+08:00')
+  assert.equal(buildNextClaimAt({ now }), '2026-11-16T06:01:00.000Z')
+  assert.equal(buildNextClaimAt({ now, tomorrow: true }), '2026-11-17T01:00:00.000Z')
+  assert.equal(buildNextClaimAt({ now: Date.parse('2026-11-16T21:00:00+08:00') }), '2026-11-17T01:00:00.000Z')
 })
 
 test('additional accounts claim and upgrade in place; pool and account actions share deduplication', async () => {
