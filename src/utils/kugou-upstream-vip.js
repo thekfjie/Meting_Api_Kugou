@@ -62,10 +62,9 @@ export const performKugouLiteVipListen = async (cookie, pool = 'general') => {
   return buildResult(response)
 }
 
-export const performKugouLiteVipClaim = async (cookie, pool = 'general', day) => {
-  const response = await requestKugouUpstream('/youth/day/vip', {
+export const performKugouLiteVipClaim = async (cookie, pool = 'general') => {
+  const response = await requestKugouUpstream('/youth/vip', {
     query: {
-      receive_day: day,
       timestamp: Date.now()
     },
     cookie: buildKugouUpstreamAuthCookie({ cookie }),
@@ -73,22 +72,6 @@ export const performKugouLiteVipClaim = async (cookie, pool = 'general', day) =>
   })
 
   return buildResult(response)
-}
-
-export const performKugouLiteVipUpgrade = async (cookie, pool = 'general') => {
-  return buildResult(await requestKugouUpstream('/youth/day/vip/upgrade', {
-    query: { timestamp: Date.now() },
-    cookie: buildKugouUpstreamAuthCookie({ cookie }),
-    pool
-  }))
-}
-
-export const fetchKugouLiteVipRecord = async (cookie, pool = 'general') => {
-  return buildResult(await requestKugouUpstream('/youth/month/vip/record', {
-    query: { timestamp: Date.now() },
-    cookie: buildKugouUpstreamAuthCookie({ cookie }),
-    pool
-  }))
 }
 
 export const fetchKugouVipDetail = async (cookie, pool = 'general') => {
