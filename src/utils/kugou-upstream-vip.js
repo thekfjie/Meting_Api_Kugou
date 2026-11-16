@@ -19,6 +19,9 @@ const extractMessage = (body) => {
 
 const isSuccessBody = (body) => {
   if (!body || typeof body !== 'object') return false
+  for (const key of ['errcode', 'error_code']) {
+    if (body[key] !== undefined && body[key] !== null && body[key] !== '' && Number(body[key]) !== 0) return false
+  }
 
   if (body.status !== undefined && body.status !== null && body.status !== '') {
     return Number(body.status) === 1
@@ -40,6 +43,7 @@ const buildResult = (response) => {
 
   return {
     ok: Boolean(response?.ok) && isSuccessBody(body),
+    status: response?.status || 0,
     body,
     message: extractMessage(body),
     cookieMap: mergeKugouSetCookies(response?.cookies || [])
@@ -58,9 +62,10 @@ export const performKugouLiteVipListen = async (cookie, pool = 'general') => {
   return buildResult(response)
 }
 
-export const performKugouLiteVipClaim = async (cookie, pool = 'general') => {
-  const response = await requestKugouUpstream('/youth/vip', {
+export const performKugouLiteVipClaim = async (cookie, pool = 'general', day) => {
+  const response = await requestKugouUpstream('/youth/day/vip', {
     query: {
+      receive_day: day,
       timestamp: Date.now()
     },
     cookie: buildKugouUpstreamAuthCookie({ cookie }),
@@ -68,6 +73,22 @@ export const performKugouLiteVipClaim = async (cookie, pool = 'general') => {
   })
 
   return buildResult(response)
+}
+
+export const performKugouLiteVipUpgrade = async (cookie, pool = 'general') => {
+  return buildResult(await requestKugouUpstream('/youth/day/vip/upgrade', {
+    query: { timestamp: Date.now() },
+    cookie: buildKugouUpstreamAuthCookie({ cookie }),
+    pool
+  }))
+}
+
+export const fetchKugouLiteVipRecord = async (cookie, pool = 'general') => {
+  return buildResult(await requestKugouUpstream('/youth/month/vip/record', {
+    query: { timestamp: Date.now() },
+    cookie: buildKugouUpstreamAuthCookie({ cookie }),
+    pool
+  }))
 }
 
 export const fetchKugouVipDetail = async (cookie, pool = 'general') => {

@@ -1,6 +1,7 @@
 import { readKugouAdminState, updateKugouAdminState } from './kugou-admin-state.js'
 import { parseKugouCookie } from './kugou-songinfo.js'
 import { kugouAuthSummary } from './kugou-auth-log.js'
+import { parseKugouVipTime } from './kugou-membership.js'
 
 export const getKugouAccountId = (cookie, platform) => {
   const parsed = parseKugouCookie(cookie)
@@ -40,6 +41,12 @@ export const listKugouAccounts = async () => {
     nickname: account.profile?.nickname || '',
     vipType: account.profile?.vipType || '',
     expireTime: account.profile?.expireTime || '',
+    memberships: (Array.isArray(account.profile?.memberships) ? account.profile.memberships : []).map(item => ({
+      id: item.id,
+      name: item.name,
+      expireTime: item.expireTime,
+      status: parseKugouVipTime(item.expireTime) ? (parseKugouVipTime(item.expireTime) > Date.now() ? 'active' : 'expired') : item.status
+    })),
     updatedAt: account.updatedAt,
     maintenance: account.maintenance || {},
     auth: kugouAuthSummary(account.cookie),

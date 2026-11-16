@@ -392,7 +392,13 @@ th,td { padding:10px 8px; }
 .quota-form { display:flex; align-items:center; gap:6px; }
 .quota-form input { width:78px; padding:6px 8px; }
 .quota-form button,.account-actions button { padding:6px 9px; }
-.account-actions { display:flex; gap:6px; }
+.account-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.memberships { display:grid; gap:8px; min-width:350px; }
+.membership { display:grid; grid-template-columns:1fr auto; gap:12px; }
+.membership time { white-space:nowrap; }
+.membership-status { margin-left:8px; }
+.membership-status { font-weight:500; }
+.membership-status.active { color:var(--flash-text); }
 .route-state { color:var(--text-sub); }
 .route-state.primary { color:var(--flash-text); background:var(--flash-bg); padding:3px 7px; border-radius:4px; }
 .account-table { min-width:1300px!important; }
@@ -471,6 +477,21 @@ const renderRequestLogsSection = (logs) => `
   </div>
 </section>`
 
+const renderMemberships = account => {
+  const memberships = account.memberships?.length ? account.memberships : account.vipType ? [{ name: account.vipType, expireTime: account.expireTime, status: 'unknown' }] : []
+  return memberships.length
+    ? `<div class="memberships">${memberships.map(item => `<div class="membership"><span><strong>${esc(item.name)}</strong><span class="membership-status ${item.status === 'active' ? 'active' : ''}">${item.status === 'active' ? '有效' : item.status === 'expired' ? '已到期' : '待确认'}</span></span><time>${esc(item.expireTime || '到期时间未知')}</time></div>`).join('')}</div>`
+    : '暂无会员'
+}
+
+const renderClaimResult = result => {
+  if (!result?.evidence) return esc(resultText(result))
+  const evidence = result.evidence
+  const changes = evidence.changes || []
+  const steps = Object.entries(evidence.steps || {}).map(([name, step]) => `${name}: HTTP ${step.http || '-'} / ${step.code ?? '-'}`).join('\n')
+  return `${esc(result.message)}<details><summary>核验记录</summary><div>${esc(evidence.day)}</div>${changes.map(item => `<div>${esc(item.name)}：${esc(item.before || '无')} → ${esc(item.after)}</div>`).join('')}<pre>${esc(steps)}</pre></details>`
+}
+
 export const page = ({
   flash,
   basePath,
@@ -487,7 +508,6 @@ export const page = ({
   logs,
   quickProcessNames
 }) => {
-  const litePools = pools.filter(item => item.platform === 'lite')
   const accountRows = accounts.map(account => {
     const routing = dispatch.accounts.find(a => a.id === account.id) || { enabled: true, used: 0, limit: 0 }
     const current = pools.find(p => p.accountId === account.id)
@@ -593,8 +613,7 @@ export const page = ({
                 <th>平台</th>
                 <th>用户 ID</th>
                 <th>昵称</th>
-                <th>VIP 类型</th>
-                <th>到期时间</th>
+                <th>会员权益</th>
                 <th>登录</th>
                 <th>调度</th>
                 <th>本分钟用量</th>
@@ -603,7 +622,7 @@ export const page = ({
               </tr>
             </thead>
             <tbody>
-              ${accountRows.map(item => `<tr data-account-id="${esc(item.id)}"><td>${esc(item.pool?.label || '-')}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(item.userId)}</td><td>${esc(item.nickname || '-')}</td><td>${esc(item.vipType || '-')}</td><td>${esc(item.expireTime || '-')}</td><td>${esc(item.loginLabel)}</td><td><span class="route-state${item.preferred && item.routing.enabled ? ' primary' : ''}">${esc(item.role)}</span></td><td>${item.routing.used} / ${item.routing.limit || '不限'}</td><td><form class="quota-form" method="post" action="${root(basePath)}/dispatch/limit"><input type="hidden" name="id" value="${esc(item.id)}"><input aria-label="${esc(item.nickname || item.userId)} ${esc(item.platform)} 每分钟上限" type="number" name="limit" min="0" max="100000" step="1" required value="${item.routing.limit}"><button class="ghost" type="submit">保存</button></form></td><td><div class="account-actions">${['check', 'refresh'].map(action => `<form method="post" action="${root(basePath)}/accounts/action"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="action" value="${action}"><button class="ghost" type="submit">${action === 'check' ? '检测' : '刷新'}</button></form>`).join('')}<form method="post" action="${root(basePath)}/dispatch/enabled"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="enabled" value="${item.routing.enabled ? '0' : '1'}"><button class="ghost" type="submit">${item.routing.enabled ? '暂停' : '启用'}</button></form></div></td></tr>`).join('')}
+              ${accountRows.map(item => `<tr data-account-id="${esc(item.id)}"><td>${esc(item.pool?.label || '-')}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(item.userId)}</td><td>${esc(item.nickname || '-')}</td><td>${renderMemberships(item)}</td><td>${esc(item.loginLabel)}</td><td><span class="route-state${item.preferred && item.routing.enabled ? ' primary' : ''}">${esc(item.role)}</span></td><td>${item.routing.used} / ${item.routing.limit || '不限'}</td><td><form class="quota-form" method="post" action="${root(basePath)}/dispatch/limit"><input type="hidden" name="id" value="${esc(item.id)}"><input aria-label="${esc(item.nickname || item.userId)} ${esc(item.platform)} 每分钟上限" type="number" name="limit" min="0" max="100000" step="1" required value="${item.routing.limit}"><button class="ghost" type="submit">保存</button></form></td><td><div class="account-actions">${['check', 'refresh'].map(action => `<form method="post" action="${root(basePath)}/accounts/action"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="action" value="${action}"><button class="ghost" type="submit">${action === 'check' ? '检测' : '刷新'}</button></form>`).join('')}<form method="post" action="${root(basePath)}/dispatch/enabled"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="enabled" value="${item.routing.enabled ? '0' : '1'}"><button class="ghost" type="submit">${item.routing.enabled ? '暂停' : '启用'}</button></form></div></td></tr>`).join('')}
             </tbody>
           </table>
         </div>
@@ -678,25 +697,17 @@ export const page = ({
         </div>
       </section>
       <section class="card full compact-card">
-        <h2>Lite 会员领取</h2>
+        <h2>领取与升级</h2>
         <div class="actions">
-          ${pools.map(item => `<form method="post" action="${root(basePath)}/kugou/vip/claim"><input type="hidden" name="pool" value="${esc(item.pool)}"><button type="submit"${item.platform === 'lite' ? '' : ' disabled'} class="${item.pool === 'general' ? 'ghost' : ''}">领取${esc(item.label)} Lite 会员</button></form>`).join('')}
           <form method="post" action="${root(basePath)}/kugou/vip/claim-all">
-            <button class="danger" type="submit"${litePools.length ? '' : ' disabled'}>批量执行</button>
+            <button class="ghost" type="submit"${accountRows.some(item => item.platform === 'lite') ? '' : ' disabled'}>全部领取并升级</button>
           </form>
         </div>
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th>池分区</th>
-                <th>平台</th>
-                <th>上次领取</th>
-                <th>领取结果</th>
-              </tr>
-            </thead>
+            <thead><tr><th>概念版账号</th><th>上次执行</th><th>结果</th><th>操作</th></tr></thead>
             <tbody>
-              ${pools.map(item => `<tr><td>${esc(item.label)}</td><td>${esc(platformDisplayLabel(item.platform))}</td><td>${esc(time(item.state?.lastClaimAt))}</td><td class="wrap-cell">${esc(resultText(item.state?.lastClaimResult))}</td></tr>`).join('')}
+              ${accountRows.filter(item => item.platform === 'lite').map(item => `<tr><td>${esc(item.nickname || item.userId)}<br>${esc(item.userId)}</td><td>${esc(time(item.state.lastClaimAt))}</td><td class="wrap-cell">${renderClaimResult(item.state.lastClaimResult)}</td><td><form method="post" action="${root(basePath)}/accounts/action"><input type="hidden" name="id" value="${esc(item.id)}"><input type="hidden" name="action" value="claim"><button class="ghost" type="submit">领取并升级</button></form></td></tr>`).join('') || '<tr><td colspan="4">暂无概念版账号</td></tr>'}
             </tbody>
           </table>
         </div>
