@@ -85,6 +85,40 @@ test('device registration uses v3 without replacing the saved device identity', 
   }), sentinel)
 })
 
+test('device registration recovers an empty v3 identifier once and rejects an empty fallback', async () => {
+  const util = require('../KuGouMusicApi/util/index.js')
+  const decrypt = util.playlistAesDecrypt
+  const cookie = { KUGOU_API_GUID: 'saved-guid', token: 'fixture' }
+  const calls = []
+  let legacyDfid = 'fixture-device'
+  util.playlistAesDecrypt = ({ str }) => JSON.parse(Buffer.from(str, 'base64').toString())
+  try {
+    const useAxios = async request => {
+      calls.push(request)
+      return {
+        status: 200,
+        cookie: [],
+        body: Buffer.from(JSON.stringify({ status: 1, data: { dfid: request.url.includes('/v2/') ? legacyDfid : '' } }))
+      }
+    }
+    const response = await register({ cookie }, useAxios)
+    assert.deepEqual(calls.map(r => r.url), ['/risk/v3/r_register_dev', '/risk/v2/r_register_dev'])
+    assert.ok(calls.every(r => r.cookie === cookie))
+    assert.equal(calls[0].data, calls[1].data)
+    assert.equal(calls[0].params.p, calls[1].params.p)
+    assert.deepEqual(response.cookie, ['dfid=fixture-device'])
+    legacyDfid = ''
+    calls.length = 0
+    await assert.rejects(register({ cookie }, useAxios), error => {
+      assert.equal(error.status, 502)
+      assert.equal(error.body.code, 'DEVICE_REGISTRATION_FAILED')
+      assert.deepEqual(error.cookie, [])
+      return true
+    })
+    assert.equal(calls.length, 2)
+  } finally { util.playlistAesDecrypt = decrypt }
+})
+
 test('transport returns structured failures without serializing Axios credentials', async () => {
   handler = (_, res) => { res.destroy() }
   await assert.rejects(createRequest({ baseURL: mock.url, url: '/reset', cookie: { token: 'private-token', userid: '42' } }), error => {

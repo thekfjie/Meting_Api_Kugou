@@ -1,5 +1,5 @@
 const util = require('../util');
-module.exports = (params, useAxios) => {
+module.exports = async (params, useAxios) => {
   const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2 } = util;
   const userid = params?.userid || params?.cookie?.userid || 0;
   const token = params?.token || params.cookie?.token || '';
@@ -106,27 +106,33 @@ module.exports = (params, useAxios) => {
 
   const p = rsaEncrypt2({ aes: aesEncrypt.key, uid: userid, token });
 
-  return new Promise((resolve, reject) => {
-    useAxios({
+  const request = async (version) => {
+    const response = await useAxios({
       baseURL: 'https://userservice.kugou.com',
-      url: '/risk/v3/r_register_dev',
+      url: `/risk/${version}/r_register_dev`,
       method: 'POST',
       data: aesEncrypt.str,
       params: { part: 1, platid: 1, p },
       encryptType: 'android',
       cookie: params?.cookie || {},
       responseType: 'arraybuffer',
-    })
-      .then((res) => {
-        res.body = playlistAesDecrypt({ str: res.body.toString('base64'), key: aesEncrypt.key });
+    });
+    response.body = playlistAesDecrypt({ str: response.body.toString('base64'), key: aesEncrypt.key });
+    return response;
+  };
+  const hasDfid = (response) => response.body?.status === 1 &&
+    typeof response.body?.data?.dfid === 'string' && response.body.data.dfid.trim().length > 0;
 
-        const { body } = res;
-        if (body?.status === 1 && body?.data) {
-          res.cookie.push(`dfid=${res.body.data['dfid']}`);
-        }
-
-        resolve(res);
-      })
-      .catch((e) => reject(e));
-  });
+  let response = await request('v3');
+  // Lite can acknowledge v3 with an empty identifier. Reuse the same identity once on v2.
+  if (response.body?.status === 1 && !hasDfid(response)) response = await request('v2');
+  if (!hasDfid(response)) {
+    throw Object.assign(new Error('Device registration returned no dfid'), {
+      status: 502,
+      body: { status: 0, code: 'DEVICE_REGISTRATION_FAILED', msg: 'Device registration returned no dfid' },
+      cookie: [],
+    });
+  }
+  response.cookie.push(`dfid=${response.body.data.dfid}`);
+  return response;
 };
