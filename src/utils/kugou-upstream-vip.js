@@ -19,9 +19,6 @@ const extractMessage = (body) => {
 
 const isSuccessBody = (body) => {
   if (!body || typeof body !== 'object') return false
-  for (const key of ['errcode', 'error_code']) {
-    if (body[key] !== undefined && body[key] !== null && body[key] !== '' && Number(body[key]) !== 0) return false
-  }
 
   if (body.status !== undefined && body.status !== null && body.status !== '') {
     return Number(body.status) === 1
@@ -43,7 +40,6 @@ const buildResult = (response) => {
 
   return {
     ok: Boolean(response?.ok) && isSuccessBody(body),
-    status: response?.status || 0,
     body,
     message: extractMessage(body),
     cookieMap: mergeKugouSetCookies(response?.cookies || [])

@@ -8,8 +8,6 @@ export const parseKugouVipTime = value => {
   return Number.isFinite(timestamp) ? timestamp : 0
 }
 
-export const getKugouVipDay = (now = Date.now()) => new Date(now + 8 * 3600000).toISOString().slice(0, 10)
-
 // Concept products are separate from the regular client's VIP/Super VIP.
 export const summarizeKugouMemberships = (data = {}, now = Date.now()) => {
   const memberships = new Map()
@@ -37,11 +35,3 @@ export const summarizeKugouMemberships = (data = {}, now = Date.now()) => {
   if (parseKugouVipTime(data.su_vip_end_time)) add('regular/svip', '超级 VIP', data.su_vip_end_time, 0)
   return [...memberships.values()]
 }
-
-export const kugouMembershipChanges = (before = [], after = []) => after.flatMap(item => {
-  const previous = before.find(entry => entry.id === item.id)
-  const expiresAt = parseKugouVipTime(item.expireTime)
-  const previousAt = parseKugouVipTime(previous?.expireTime)
-  if (expiresAt <= previousAt || item.status !== 'active') return []
-  return [{ id: item.id, name: item.name, before: previous?.expireTime || '', after: item.expireTime }]
-})
