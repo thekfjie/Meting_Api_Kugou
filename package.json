@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.6",
-    "@meting/core": "^1.6.1",
+    "@meting/core": "^1.6.2",
     "dotenv": "^17.2.3",
     "hash.js": "^1.1.7",
     "hono": "^4.11.10",

@@ -97,6 +97,9 @@ const createRequest = (options) => {
       headers: Object.assign({}, options?.headers || {}, headers),
       withCredentials: true,
       responseType: options.responseType,
+      // Bound remote work even after the API caller has disconnected.
+      timeout: 8000,
+      signal: AbortSignal.timeout(8000),
     };
 
     const proxyConfig = resolveProxy();
@@ -134,7 +137,7 @@ const createRequest = (options) => {
         answer.body = body;
       }
 
-      if (response.data.status === 0 || (response.data?.error_code && response.data.error_code !== 0)) {
+      if (body?.status === 0 || (body?.error_code && body.error_code !== 0)) {
         answer.status = 502;
         reject(answer);
       } else {
@@ -143,7 +146,13 @@ const createRequest = (options) => {
       }
     } catch (e) {
       answer.status = 502;
-      answer.body = { status: 0, msg: e };
+      const timedOut = ['ECONNABORTED', 'ETIMEDOUT', 'ERR_CANCELED'].includes(e?.code);
+      // Axios errors carry request headers, tokens and device identifiers.
+      answer.body = {
+        status: 0,
+        code: timedOut ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_REQUEST_FAILED',
+        msg: timedOut ? 'Kugou upstream request timed out' : 'Kugou upstream request failed',
+      };
       reject(answer);
     }
   });

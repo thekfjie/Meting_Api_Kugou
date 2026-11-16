@@ -1,6 +1,6 @@
 const util = require('../util');
 module.exports = (params, useAxios) => {
-  const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2, signParamsKey, clientver, appid } = util;
+  const { playlistAesEncrypt, playlistAesDecrypt, rsaEncrypt2 } = util;
   const userid = params?.userid || params?.cookie?.userid || 0;
   const token = params?.token || params.cookie?.token || '';
   //可用内存，单位是字节
@@ -109,7 +109,7 @@ module.exports = (params, useAxios) => {
   return new Promise((resolve, reject) => {
     useAxios({
       baseURL: 'https://userservice.kugou.com',
-      url: '/risk/v2/r_register_dev',
+      url: '/risk/v3/r_register_dev',
       method: 'POST',
       data: aesEncrypt.str,
       params: { part: 1, platid: 1, p },

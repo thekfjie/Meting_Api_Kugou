@@ -5,6 +5,7 @@ module.exports = (params, useAxios) => {
     encryptType: 'android',
     method: 'post',
     params: { source_id: 90139, receive_day: params.receive_day },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     cookie: params?.cookie,
   });
 };

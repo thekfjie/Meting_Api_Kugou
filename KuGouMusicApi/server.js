@@ -84,7 +84,7 @@ async function consturctServer(moduleDefs) {
 
   // Cookie Parser
   app.use((req, _, next) => {
-    req.cookies = {};
+    req.cookies = Object.create(null);
     (req.headers.cookie || '').split(/;\s+|(?<!\s)\s+$/g).forEach((pair) => {
       const crack = pair.indexOf('=');
       if (crack < 1 || crack === pair.length - 1) {
@@ -124,7 +124,7 @@ async function consturctServer(moduleDefs) {
   });
 
   // Body Parser
-  app.use(express.json());
+  app.use(express.json({ reviver: (key, value) => key === '__proto__' ? undefined : value }));
   app.use(express.urlencoded({ extended: false }));
 
   /**
@@ -153,7 +153,9 @@ async function consturctServer(moduleDefs) {
 
       const { cookie, ...params } = req.query;
 
-      const query = Object.assign({}, { cookie: Object.assign({}, req.cookies, cookie) }, params, { body: req.body });
+      const query = Object.assign(Object.create(null), {
+        cookie: Object.assign(Object.create(null), req.cookies, cookie),
+      }, params, { body: req.body });
 
       const authHeader = req.headers['authorization'];
       if (authHeader) {
@@ -172,7 +174,7 @@ async function consturctServer(moduleDefs) {
           return createRequest(config);
         });
 
-        console.log('[OK]', decode(req.originalUrl));
+        console.log('[OK]', req.baseUrl);
 
         const cookies = moduleResponse.cookie;
         if (!query.noCookie) {
@@ -198,8 +200,8 @@ async function consturctServer(moduleDefs) {
 
         res.header(moduleResponse.headers).status(moduleResponse.status).send(moduleResponse.body);
       } catch (e) {
-        const moduleResponse = e;
-        console.log('[ERR]', decode(req.originalUrl), {
+        const moduleResponse = e || {};
+        console.log('[ERR]', req.baseUrl, {
           status: moduleResponse.status,
           body: moduleResponse.body,
         });
@@ -213,7 +215,9 @@ async function consturctServer(moduleDefs) {
           return;
         }
 
-        res.header(moduleResponse.headers).status(moduleResponse.status).send(moduleResponse.body);
+        const status = Number.isInteger(moduleResponse.status) && moduleResponse.status >= 400 && moduleResponse.status <= 599
+          ? moduleResponse.status : 500;
+        res.header(moduleResponse.headers).status(status).send(moduleResponse.body);
       }
     });
   }
@@ -241,4 +245,4 @@ async function startService() {
   return appExt;
 }
 
-module.exports = { startService, getModulesDefinitions };
+module.exports = { startService, getModulesDefinitions, createServer: consturctServer };
